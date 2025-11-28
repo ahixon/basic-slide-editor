@@ -31,22 +31,25 @@ body {
   transition: background-color 150ms ease, color 150ms ease;
 }
 
-.slide-viewport {
-  --slide-vertical-padding: clamp(3rem, 12vh, 7rem);
-  --slide-horizontal-padding: clamp(1.5rem, 8vw, 5rem);
+@media (max-width: 768px) {
+  .slide-sidebar {
+    display: none;
+  }
 }
 
-.slide-viewport > div {
-  padding-inline: var(--slide-horizontal-padding);
+.slide-shell {
+  position: relative;
+  overflow: hidden;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: none;
 }
 
-.slide-viewport article[data-slide-id] > .mt-4 {
-  display: flex;
-  justify-content: center;
-}
-
-.slide-viewport article[data-slide-id] > .mt-4 > div {
-  margin-inline: auto;
-  width: min(100%, calc((100dvh - var(--slide-vertical-padding)) * 16 / 9));
-  max-height: calc(100dvh - var(--slide-vertical-padding));
+.slide-canvas {
+  width: 1920px;
+  height: 1080px;
+  position: relative;
+  transform-origin: top left;
+  border-radius: 0.5rem;
+  background-color: #fff;
 }

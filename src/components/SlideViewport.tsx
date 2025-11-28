@@ -1,0 +1,205 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+import type { Slide } from '../features/decks/editorState'
+import { SlideCanvas } from './SlideCanvas'
+import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from './slideDimensions'
+
+const SLIDE_VERTICAL_GAP = 24
+const VIEWPORT_PADDING = 32 // matches p-4 (16px * 2)
+
+type SlideViewportProps = {
+  slides: Slide[]
+  activeId: string
+  onVisibleChange: (slideId: string) => void
+  scaleOverride?: number | null
+}
+
+export function SlideViewport({
+  slides,
+  activeId,
+  onVisibleChange,
+  scaleOverride = null,
+}: SlideViewportProps) {
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const activeIdRef = useRef(activeId)
+  const syncingFromUrlRef = useRef(false)
+  const syncTimeoutRef = useRef<number | null>(null)
+  const measurementFrameRef = useRef<number | null>(null)
+  const changeOriginRef = useRef<'external' | 'viewport'>('external')
+  const panelRefs = useRef<Map<string, HTMLElement>>(new Map())
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
+
+  const registerPanelRef = useCallback((slideId: string, node: HTMLElement | null) => {
+    const map = panelRefs.current
+    if (!node) {
+      map.delete(slideId)
+    } else {
+      map.set(slideId, node)
+    }
+  }, [])
+
+  useEffect(() => {
+    activeIdRef.current = activeId
+  }, [activeId])
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const activePanel = panelRefs.current.get(activeId)
+    if (!activePanel) return
+
+    if (changeOriginRef.current === 'viewport') {
+      changeOriginRef.current = 'external'
+      return
+    }
+
+    syncingFromUrlRef.current = true
+    const frame = requestAnimationFrame(() => {
+      activePanel.scrollIntoView({ behavior: 'auto', block: 'center' })
+      syncTimeoutRef.current = window.setTimeout(() => {
+        syncingFromUrlRef.current = false
+      }, 200)
+    })
+
+    return () => {
+      cancelAnimationFrame(frame)
+      if (syncTimeoutRef.current) {
+        window.clearTimeout(syncTimeoutRef.current)
+        syncTimeoutRef.current = null
+      }
+    }
+  }, [activeId])
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+
+    const handleScroll = () => {
+      if (syncingFromUrlRef.current) return
+      if (measurementFrameRef.current !== null) return
+
+      measurementFrameRef.current = requestAnimationFrame(() => {
+        measurementFrameRef.current = null
+        const nextId = findClosestSlideId(viewport, panelRefs.current)
+        if (nextId && nextId !== activeIdRef.current) {
+          changeOriginRef.current = 'viewport'
+          onVisibleChange(nextId)
+        }
+      })
+    }
+
+    viewport.addEventListener('scroll', handleScroll, { passive: true })
+    handleScroll()
+
+    return () => {
+      viewport.removeEventListener('scroll', handleScroll)
+      if (measurementFrameRef.current !== null) {
+        cancelAnimationFrame(measurementFrameRef.current)
+        measurementFrameRef.current = null
+      }
+    }
+  }, [slides, onVisibleChange])
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+
+    const measure = () => {
+      const rect = viewport.getBoundingClientRect()
+
+      setViewportSize({
+        width: Math.max(rect.width, 0),
+        height: Math.max(rect.height, 0),
+      })
+    }
+
+    measure()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure)
+      return () => window.removeEventListener('resize', measure)
+    }
+
+    const observer = new ResizeObserver(() => measure())
+    observer.observe(viewport)
+
+    return () => observer.disconnect()
+  }, [])
+
+  const fitScale = useMemo(() => {
+    if (!viewportSize.width || !viewportSize.height) return 1
+    const maxWidth = Math.max(viewportSize.width - VIEWPORT_PADDING, 0)
+    const maxHeight = Math.max(viewportSize.height - VIEWPORT_PADDING - SLIDE_VERTICAL_GAP, 0)
+    const widthRatio = maxWidth / SLIDE_BASE_WIDTH
+    const heightRatio = maxHeight / SLIDE_BASE_HEIGHT
+    const nextScale = Math.min(widthRatio, heightRatio)
+    return Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 1
+  }, [viewportSize])
+
+  const slideScale = useMemo(() => {
+    if (typeof scaleOverride === 'number' && Number.isFinite(scaleOverride) && scaleOverride > 0) {
+      return scaleOverride
+    }
+    return fitScale
+  }, [fitScale, scaleOverride])
+
+  const scaledWidth = SLIDE_BASE_WIDTH * slideScale
+  const scaledHeight = SLIDE_BASE_HEIGHT * slideScale
+
+  return (
+    <div
+      ref={viewportRef}
+      className="slide-viewport relative flex-1 min-w-0 overflow-auto rounded-lg border border-neutral-200 bg-neutral-50 dark:border-slate-800 dark:bg-slate-900"
+    >
+      <div className="space-y-6 p-4 w-fit min-w-full min-h-full">
+        {slides.map((slide) => {
+          const isActive = slide.id === activeId
+          return (
+            <div
+              key={slide.id}
+              data-slide-id={slide.id}
+              ref={(node) => registerPanelRef(slide.id, node)}
+              onClick={() => {
+                changeOriginRef.current = 'viewport'
+                onVisibleChange(slide.id)
+              }}
+              className={`slide-shell rounded-lg border bg-white shadow-sm transition dark:bg-white ${
+                isActive
+                  ? 'border-sky-500 ring-1 ring-sky-500 dark:border-sky-400 dark:ring-sky-400'
+                  : 'border-neutral-200 dark:border-slate-800'
+              }`}
+              style={{ width: scaledWidth, height: scaledHeight }}
+            >
+              <SlideCanvas slide={slide} scale={slideScale} />
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function findClosestSlideId(viewport: HTMLDivElement, panelRefs: Map<string, HTMLElement>): string | null {
+  const viewportRect = viewport.getBoundingClientRect()
+  const viewportCenter = viewportRect.top + viewportRect.height / 2
+
+  let closestId: string | null = null
+  let closestDistance = Number.POSITIVE_INFINITY
+
+  panelRefs.forEach((panel, slideId) => {
+    const rect = panel.getBoundingClientRect()
+    const isVisible = rect.bottom >= viewportRect.top && rect.top <= viewportRect.bottom
+    if (!isVisible) return
+
+    const panelCenter = rect.top + rect.height / 2
+    const distance = Math.abs(panelCenter - viewportCenter)
+    if (distance < closestDistance) {
+      closestDistance = distance
+      closestId = slideId
+    }
+  })
+
+  return closestId
+}
+
+export type { SlideViewportProps }

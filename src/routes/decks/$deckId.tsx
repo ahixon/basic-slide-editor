@@ -1,27 +1,37 @@
 import { Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 
-import type { SlideMeta } from '../../features/decks/editorState'
-import { DeckEditorStateProvider, buildMockSlides } from '../../features/decks/editorState'
+import type { Deck } from '../../features/decks/editorState'
+import { getDeck } from '../../features/decks/editorState'
 
-type DeckLoaderData = {
+export type DeckLoaderData = {
   deckId: string
-  slides: SlideMeta[]
+  deck: Deck
 }
 
 export const Route = createFileRoute('/decks/$deckId')({
-  loader: ({ params }): DeckLoaderData => ({
-    deckId: params.deckId,
-    slides: buildMockSlides(params.deckId),
-  }),
+  loader: ({ params }): DeckLoaderData => {
+    const deck =
+      getDeck(params.deckId) ?? {
+        id: params.deckId,
+        title: 'Untitled Deck',
+        slides: [],
+      }
+
+    return {
+      deckId: params.deckId,
+      deck,
+    }
+  },
   component: DeckRouteShell,
 })
 
 function DeckRouteShell() {
   const { deckId } = Route.useParams()
-  const { slides } = Route.useLoaderData() as DeckLoaderData
+  const { deck } = Route.useLoaderData() as DeckLoaderData
   const navigate = Route.useNavigate()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const slides = useMemo(() => deck.slides ?? [], [deck])
 
   useEffect(() => {
     if (!slides.length) return
@@ -36,9 +46,5 @@ function DeckRouteShell() {
     }
   }, [deckId, slides, pathname, navigate])
 
-  return (
-    <DeckEditorStateProvider deckId={deckId}>
-      <Outlet />
-    </DeckEditorStateProvider>
-  )
+  return <Outlet />
 }
