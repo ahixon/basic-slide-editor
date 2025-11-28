@@ -105,11 +105,11 @@ export function SlideViewport({
     if (!viewport) return
 
     const measure = () => {
-      const rect = viewport.getBoundingClientRect()
+      const { clientWidth, clientHeight } = viewport
 
       setViewportSize({
-        width: Math.max(rect.width, 0),
-        height: Math.max(rect.height, 0),
+        width: Math.max(clientWidth, 0),
+        height: Math.max(clientHeight, 0),
       })
     }
 
