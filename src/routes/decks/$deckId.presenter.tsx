@@ -1,31 +1,159 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+import { SlideCanvas } from '../../components/SlideCanvas'
+import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from '../../components/slideDimensions'
+import type { Deck, Slide } from '../../features/decks/editorState'
+import { getDeck } from '../../features/decks/editorState'
+import { Expand } from 'lucide-react'
+
+type PresenterLoaderData = {
+  deckId: string
+  deck: Deck
+}
 
 export const Route = createFileRoute('/decks/$deckId/presenter')({
+  loader: ({ params }): PresenterLoaderData => {
+    const deck =
+      getDeck(params.deckId) ?? {
+        id: params.deckId,
+        title: 'Untitled Deck',
+        slides: [],
+      }
+
+    return {
+      deckId: params.deckId,
+      deck,
+    }
+  },
   component: PresenterConsole,
 })
 
 function PresenterConsole() {
-  const { deckId } = Route.useParams()
+  const { deck, deckId } = Route.useLoaderData() as PresenterLoaderData
+  const slides = deck.slides ?? []
+  const resetKey = `${deckId}:${slides.map((slide) => slide.id).join('|')}`
 
+  return <PresenterStage key={resetKey} slides={slides} />
+}
+
+type PresenterStageProps = {
+  slides: Slide[]
+}
+
+function PresenterStage({ slides }: PresenterStageProps) {
+  const [activeIndex, setActiveIndex] = useState(0)
+  const stageRef = useRef<HTMLDivElement | null>(null)
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 })
+  const [isFullscreen, setIsFullscreen] = useState(() => Boolean(document.fullscreenElement))
+
+  useEffect(() => {
+    const node = stageRef.current
+    if (!node) return
+
+    const measure = () => {
+      const rect = node.getBoundingClientRect()
+      setStageSize({ width: rect.width, height: rect.height })
+    }
+
+    measure()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure)
+      return () => window.removeEventListener('resize', measure)
+    }
+
+    const observer = new ResizeObserver(() => measure())
+    observer.observe(node)
+
+    return () => observer.disconnect()
+  }, [])
+
+  const handleAdvance = useCallback(() => {
+    if (!slides.length) return
+    setActiveIndex((prev) => Math.min(prev + 1, slides.length - 1))
+  }, [slides.length])
+
+  const handleRetreat = useCallback(() => {
+    if (!slides.length) return
+    setActiveIndex((prev) => Math.max(prev - 1, 0))
+  }, [slides.length])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!slides.length) return
+
+      const key = event.key
+      const advanceKeys = key === 'ArrowRight' || key === 'ArrowDown'
+      const retreatKeys = key === 'ArrowLeft' || key === 'ArrowUp'
+      const spaceKey = key === ' ' || key === 'Spacebar'
+
+      if (advanceKeys || spaceKey) {
+        event.preventDefault()
+        handleAdvance()
+        return
+      }
+
+      if (retreatKeys) {
+        event.preventDefault()
+        handleRetreat()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [handleAdvance, handleRetreat, slides.length])
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement))
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
+
+  const handleEnterFullscreen = useCallback(() => {
+    const element = stageRef.current
+    if (!element || document.fullscreenElement) return
+    element.requestFullscreen().catch(() => {
+      // ignore failures
+    })
+  }, [])
+
+  const slideScale = useMemo(() => {
+    if (!stageSize.width || !stageSize.height) {
+      return 0.5
+    }
+    const widthRatio = stageSize.width / SLIDE_BASE_WIDTH
+    const heightRatio = stageSize.height / SLIDE_BASE_HEIGHT
+    const nextScale = Math.min(widthRatio, heightRatio)
+    return Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 0.5
+  }, [stageSize])
+
+  const activeSlide = slides[activeIndex]
   return (
-    <section className="space-y-3 bg-slate-50 p-4 dark:bg-slate-950">
-      <header>
-        <p className="text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-          Presenter Console
-        </p>
-        <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Deck {deckId}</h1>
-      </header>
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="min-h-[200px] rounded border border-dashed border-neutral-300 p-4 text-slate-700 dark:border-slate-700 dark:text-slate-300">
-          Current slide preview placeholder.
+    <div className="relative min-h-screen w-full bg-slate-100">
+      {!isFullscreen && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-end p-3">
+          <button
+            type="button"
+            onClick={handleEnterFullscreen}
+            className="pointer-events-auto inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-3 text-sm font-semibold text-neutral-700 transition hover:border-sky-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-sky-500"
+          >
+            <Expand />
+          </button>
         </div>
-        <div className="min-h-[200px] rounded border border-dashed border-neutral-300 p-4 text-slate-700 dark:border-slate-700 dark:text-slate-300">
-          Next slide preview + timers placeholder.
-        </div>
+      )}
+      <div ref={stageRef} className="flex min-h-screen w-full items-center justify-center">
+        {activeSlide ? (
+          <SlideCanvas slide={activeSlide} scale={slideScale} rounded={false} />
+        ) : (
+          <div className="text-center text-slate-400">
+            This deck does not have any slides yet.
+          </div>
+        )}
       </div>
-      <div className="rounded border border-dashed border-neutral-300 p-4 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-300">
-        Speaker notes + live controls placeholder.
-      </div>
-    </section>
+    </div>
   )
 }

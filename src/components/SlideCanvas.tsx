@@ -8,14 +8,22 @@ type SlideCanvasProps = {
   scale?: number
   className?: string
   style?: CSSProperties
+  rounded?: boolean
 }
-export function SlideCanvas({ slide, scale = 1, className = '', style }: SlideCanvasProps) {
+export function SlideCanvas({
+  slide,
+  scale = 1,
+  className = '',
+  style,
+  rounded = true,
+}: SlideCanvasProps) {
   const scaledWidth = SLIDE_BASE_WIDTH * scale
   const scaledHeight = SLIDE_BASE_HEIGHT * scale
+  const roundedShellClass = rounded ? 'rounded-[32px] shadow-inner' : ''
 
   return (
     <article
-      className={`slide-canvas relative overflow-hidden rounded-[32px] bg-white text-left text-slate-900 shadow-inner ${className}`}
+      className={`slide-canvas relative overflow-hidden ${roundedShellClass} bg-white text-left text-slate-900 ${className}`}
       style={{
         width: scaledWidth,
         height: scaledHeight,
@@ -35,7 +43,9 @@ export function SlideCanvas({ slide, scale = 1, className = '', style }: SlideCa
           <SlideObject key={object.id} object={object} />
         ))}
         {!slide.objects.length && (
-          <div className="absolute inset-0 flex items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 text-xl font-semibold uppercase tracking-wide text-slate-300">
+          <div
+            className={`absolute inset-0 flex items-center justify-center border-2 border-dashed border-slate-200 text-xl font-semibold uppercase tracking-wide text-slate-300 ${rounded ? 'rounded-2xl' : ''}`}
+          >
             Drop objects to start designing
           </div>
         )}

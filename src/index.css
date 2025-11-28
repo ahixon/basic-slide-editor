@@ -50,6 +50,5 @@ body {
   height: 1080px;
   position: relative;
   transform-origin: top left;
-  border-radius: 0.5rem;
   background-color: #fff;
 }
