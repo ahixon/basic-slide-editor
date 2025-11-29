@@ -131,3 +131,8 @@ li::marker {
   outline: none !important;
   box-shadow: none !important;
 }
+
+/* Hide the sentinel break node Tiptap injects to keep cursor movement stable */
+.ProseMirror .ProseMirror-trailingBreak {
+  display: none;
+}

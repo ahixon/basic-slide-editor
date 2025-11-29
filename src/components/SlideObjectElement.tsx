@@ -2,7 +2,15 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties, HTMLAttributes, PointerEvent as ReactPointerEvent } from 'react'
 
 import type { DeckObject, ImageObject, TextObject } from '../store'
-import { MIN_TEXT_WIDTH, getTextFragmentKey, transactDeck, useDeckActions, useDeckRuntime, useDeckUndoManager } from '../store'
+import {
+  MIN_IMAGE_SIZE,
+  MIN_TEXT_WIDTH,
+  getTextFragmentKey,
+  transactDeck,
+  useDeckActions,
+  useDeckRuntime,
+  useDeckUndoManager,
+} from '../store'
 import { useRoom } from '@liveblocks/react'
 
 import { useEditor, EditorContent } from '@tiptap/react'
@@ -17,6 +25,7 @@ export type SlideObjectElementProps = {
   slideId?: string
   scale?: number
   enableTextScaling?: boolean
+  enableImageResizing?: boolean
   isSelected?: boolean
   onFocusObject?: (objectId: string) => void
   onBlurObject?: (objectId: string) => void
@@ -31,6 +40,7 @@ export function SlideObjectElement({
   slideId,
   scale = 1,
   enableTextScaling = false,
+  enableImageResizing = false,
   isSelected = false,
   onFocusObject,
   onBlurObject,
@@ -62,6 +72,12 @@ export function SlideObjectElement({
       object={object}
       className={className}
       style={style}
+      slideId={slideId}
+      scale={scale}
+      enableImageResizing={enableImageResizing}
+      isSelected={isSelected}
+      onFocusObject={onFocusObject}
+      onBlurObject={onBlurObject}
       {...rest}
     />
   )
@@ -521,26 +537,313 @@ function SlideImageElement({
   object,
   className,
   style,
+  slideId,
+  scale = 1,
+  enableImageResizing = false,
+  isSelected = false,
+  onFocusObject,
+  onBlurObject,
   ...rest
 }: {
   object: ImageObject
   className?: string
   style?: CSSProperties
-} & HTMLAttributes<HTMLElement>) {
-  const positionStyle: CSSProperties = {
-    left: object.x,
-    top: object.y,
-    width: object.width,
-    height: object.height,
+  slideId?: string
+  scale?: number
+  enableImageResizing?: boolean
+  isSelected?: boolean
+  onFocusObject?: (objectId: string) => void
+  onBlurObject?: (objectId: string) => void
+} & HTMLAttributes<HTMLDivElement>) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const imageRef = useRef<HTMLImageElement | null>(null)
+  const [selectionRect, setSelectionRect] = useState<{ width: number; height: number } | null>(null)
+  const [resizeState, setResizeState] = useState<{
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    startWidth: number
+    startHeight: number
+    aspectRatio: number
+  } | null>(null)
+  const [intrinsicSize, setIntrinsicSize] = useState<{
+    width: number
+    height: number
+    srcKey: string | null
+  } | null>(null)
+  const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null)
+  const { updateImageObjectSize } = useDeckActions()
+  const room = useRoom()
+  const historyPausedRef = useRef(false)
+  const imageSrcKey = object.src ?? null
+  const intrinsicSizeForCurrentSrc =
+    intrinsicSize && intrinsicSize.srcKey === imageSrcKey ? intrinsicSize : null
+  const isImageErrored = Boolean(imageSrcKey && failedImageSrc === imageSrcKey)
+
+  const positionStyle: CSSProperties = useMemo(
+    () => ({
+      left: object.x,
+      top: object.y,
+      width: object.width,
+      height: object.height,
+    }),
+    [object.height, object.width, object.x, object.y],
+  )
+
+  const layoutStyle: CSSProperties = useMemo(
+    () => ({ ...positionStyle, ...(style ?? {}) }),
+    [positionStyle, style],
+  )
+  const resolvedScale = Number.isFinite(scale) && scale && scale > 0 ? scale : 1
+  const aspectRatio = useMemo(() => {
+    const value =
+      intrinsicSizeForCurrentSrc && intrinsicSizeForCurrentSrc.height > 0
+        ? intrinsicSizeForCurrentSrc.width / intrinsicSizeForCurrentSrc.height
+        : object.width / object.height
+    if (!Number.isFinite(value) || value <= 0) {
+      return 1
+    }
+    return value
+  }, [intrinsicSizeForCurrentSrc, object.height, object.width])
+
+  const pauseHistory = useCallback(() => {
+    if (historyPausedRef.current) return
+    room?.history.pause()
+    historyPausedRef.current = true
+  }, [room])
+
+  const resumeHistory = useCallback(() => {
+    if (!historyPausedRef.current) return
+    room?.history.resume()
+    historyPausedRef.current = false
+  }, [room])
+
+  const handleFocusCapture = useCallback(() => {
+    onFocusObject?.(object.id)
+  }, [object.id, onFocusObject])
+
+  const handleBlurCapture = useCallback(() => {
+    onBlurObject?.(object.id)
+  }, [object.id, onBlurObject])
+
+  const handleImageLoad = useCallback(() => {
+    const node = imageRef.current
+    if (!node || !imageSrcKey) return
+    if (node.naturalWidth > 0 && node.naturalHeight > 0) {
+      setIntrinsicSize({ width: node.naturalWidth, height: node.naturalHeight, srcKey: imageSrcKey })
+      setFailedImageSrc((current) => (current === imageSrcKey ? null : current))
+    }
+  }, [imageSrcKey])
+
+  const handleImageError = useCallback(() => {
+    if (!imageSrcKey) return
+    setFailedImageSrc(imageSrcKey)
+    setIntrinsicSize((current) => (current?.srcKey === imageSrcKey ? null : current))
+  }, [imageSrcKey])
+
+  const handleResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!enableImageResizing || !slideId) return
+      event.preventDefault()
+      event.stopPropagation()
+
+      const pointerTarget = event.currentTarget
+      try {
+        pointerTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // Ignore capture failures
+      }
+
+      pauseHistory()
+      setResizeState({
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startWidth: object.width,
+        startHeight: object.height,
+        aspectRatio,
+      })
+    },
+    [aspectRatio, enableImageResizing, object.height, object.width, pauseHistory, slideId],
+  )
+
+  const handleResizePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!resizeState || event.pointerId !== resizeState.pointerId) return
+      if (!slideId) return
+      event.preventDefault()
+
+      const pointerScale = resolvedScale || 1
+      const deltaX = (event.clientX - resizeState.startClientX) / pointerScale
+      const deltaY = (event.clientY - resizeState.startClientY) / pointerScale
+      const ratio = resizeState.aspectRatio > 0 ? resizeState.aspectRatio : 1
+
+      const widthCandidate = resizeState.startWidth + deltaX
+      const minWidthForRatio = Math.max(MIN_IMAGE_SIZE, MIN_IMAGE_SIZE * ratio)
+      const constrainedWidth = Math.max(widthCandidate, minWidthForRatio)
+      const derivedHeight = constrainedWidth / ratio
+
+      const heightCandidate = resizeState.startHeight + deltaY
+      const minHeightForRatio = Math.max(MIN_IMAGE_SIZE, MIN_IMAGE_SIZE / ratio)
+      const constrainedHeight = Math.max(heightCandidate, minHeightForRatio)
+      const derivedWidth = constrainedHeight * ratio
+
+      const useHeightDriver = Math.abs(deltaY) > Math.abs(deltaX)
+      const nextWidth = useHeightDriver ? derivedWidth : constrainedWidth
+      const nextHeight = useHeightDriver ? constrainedHeight : derivedHeight
+
+      if (!Number.isFinite(nextWidth) || !Number.isFinite(nextHeight)) return
+
+      updateImageObjectSize(slideId, object.id, {
+        width: nextWidth,
+        height: nextHeight,
+      })
+    },
+    [object.id, resizeState, resolvedScale, slideId, updateImageObjectSize],
+  )
+
+  const endResize = useCallback(
+    (event?: ReactPointerEvent<HTMLDivElement>) => {
+      if (resizeState && event && event.pointerId === resizeState.pointerId) {
+        event.preventDefault()
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId)
+        } catch {
+          // Ignore release failures
+        }
+      }
+      if (resizeState) {
+        setResizeState(null)
+      }
+      resumeHistory()
+    },
+    [resizeState, resumeHistory],
+  )
+
+  const handleResizePointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!resizeState || event.pointerId !== resizeState.pointerId) return
+      endResize(event)
+    },
+    [endResize, resizeState],
+  )
+
+  const handleResizePointerCancel = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!resizeState || event.pointerId !== resizeState.pointerId) return
+      endResize(event)
+    },
+    [endResize, resizeState],
+  )
+
+  useEffect(() => {
+    return () => {
+      if (historyPausedRef.current) {
+        room?.history.resume()
+        historyPausedRef.current = false
+      }
+    }
+  }, [room])
+
+  useLayoutEffect(() => {
+    const node = containerRef.current
+    if (!node) return
+
+    const measure = () => {
+      const rect = node.getBoundingClientRect()
+      setSelectionRect({ width: rect.width, height: rect.height })
+    }
+
+    measure()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure)
+      return () => window.removeEventListener('resize', measure)
+    }
+
+    const observer = new ResizeObserver(() => measure())
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [object.height, object.width, resolvedScale])
+
+  const scaleNormalizer = resolvedScale || 1
+  const overlayWidth = selectionRect ? selectionRect.width / scaleNormalizer : null
+  const overlayHeight = selectionRect ? selectionRect.height / scaleNormalizer : null
+  const overlaySizeStyle = {
+    width: overlayWidth ? `${overlayWidth}px` : '100%',
+    height: overlayHeight ? `${overlayHeight}px` : '100%',
   }
 
+  const selectionRingStyle: CSSProperties | undefined = isSelected
+    ? {
+        borderWidth: 1,
+        width: overlaySizeStyle.width,
+        height: overlaySizeStyle.height,
+        mixBlendMode: 'multiply',
+      }
+    : undefined
+
+  const baseHandleStyle: CSSProperties = {
+    touchAction: 'none',
+    transform: resolvedScale ? `scale(${1 / resolvedScale})` : undefined,
+    cursor: 'nwse-resize',
+    transformOrigin: 'bottom right',
+    zIndex: 2,
+  }
+
+  const handleClassName = enableImageResizing
+    ? `absolute -bottom-3 -right-3 flex h-4 w-4 items-center justify-center rounded-sm border border-white bg-sky-500 text-white shadow transition-opacity duration-150 ${
+        resizeState ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+      }`
+    : 'hidden'
+
   return (
-    <figure
+    <div
+      className={`absolute group ${className}`.trim()}
+      style={layoutStyle}
+      onFocusCapture={handleFocusCapture}
+      onBlurCapture={handleBlurCapture}
       {...rest}
-      className={`absolute overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 shadow ${className}`.trim()}
-      style={{ ...positionStyle, ...style }}
     >
-      <img src={object.src} alt="Slide visual" className="h-full w-full object-cover" />
-    </figure>
+      <div ref={containerRef} className="relative h-full w-full">
+        {object.src && !isImageErrored ? (
+          <img
+            ref={imageRef}
+            src={object.src}
+            alt="Slide visual"
+            className="block h-full w-full object-contain"
+            onLoad={handleImageLoad}
+            onError={handleImageError}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-neutral-100 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            {isImageErrored ? 'Image unavailable' : 'Set image URL'}
+          </div>
+        )}
+      </div>
+      {enableImageResizing && (
+        <div className="absolute left-0 top-0" style={overlaySizeStyle}>
+          <div
+            role="presentation"
+            className={handleClassName}
+            style={baseHandleStyle}
+            onPointerDown={handleResizePointerDown}
+            onPointerMove={handleResizePointerMove}
+            onPointerUp={handleResizePointerUp}
+            onPointerCancel={handleResizePointerCancel}
+            data-slide-image-resize-handle="true"
+          >
+            <Scaling size={16} />
+          </div>
+        </div>
+      )}
+      {isSelected && (
+        <div
+          className="pointer-events-none absolute left-0 top-0 rounded-md border border-sky-400"
+          style={selectionRingStyle}
+          aria-hidden="true"
+        />
+      )}
+    </div>
   )
 }

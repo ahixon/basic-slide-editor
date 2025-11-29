@@ -296,6 +296,7 @@ export function SlideEditorCanvas({
               slideId={slide.id}
               scale={scale}
               enableTextScaling={object.type === 'text'}
+              enableImageResizing={object.type === 'image'}
               isSelected={isObjectSelected}
               onPointerDown={createPointerDownHandler(object)}
               onPointerMove={handlePointerMove}

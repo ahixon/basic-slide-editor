@@ -1,10 +1,11 @@
 import { useRoom } from '@liveblocks/react'
 import { getYjsProviderForRoom } from '@liveblocks/yjs'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import type { LiveblocksYjsProvider } from '@liveblocks/yjs'
 import * as Y from 'yjs'
 
 export const MIN_TEXT_WIDTH = 8
+export const MIN_IMAGE_SIZE = 16
 
 const DECK_HISTORY_ORIGIN = Symbol('deck-history')
 const isDeckHistoryDebuggingEnabled = Boolean(import.meta.env?.DEV)
@@ -68,7 +69,7 @@ export type TextObject = DeckObjectBase & {
 
 export type ImageObject = DeckObjectBase & {
     type: 'image'
-    src: string
+    src?: string
     width: number
     height: number
 }
@@ -96,6 +97,8 @@ export type DeckDocumentApi = {
     updateObjectPosition: (slideId: string, objectId: string, position: { x: number; y: number }) => void
     updateTextObjectScale: (slideId: string, objectId: string, scale: number) => void
     updateTextObjectWidth: (slideId: string, objectId: string, width: number) => void
+    updateImageObjectSource: (slideId: string, objectId: string, src: string) => void
+    updateImageObjectSize: (slideId: string, objectId: string, size: { width: number; height: number }) => void
     deleteObjectFromSlide: (slideId: string, objectId: string) => void
 }
 
@@ -416,10 +419,11 @@ function yObjectToDeckObject(yObject: Y.Map<unknown>): DeckObject {
     const type = yObject.get('type')
 
     if (type === 'image') {
+        const rawSrc = yObject.get('src')
         return {
             ...base,
             type: 'image',
-            src: (yObject.get('src') as string) ?? '',
+            src: typeof rawSrc === 'string' ? rawSrc : undefined,
             width: (yObject.get('width') as number) ?? 0,
             height: (yObject.get('height') as number) ?? 0,
         }
@@ -446,6 +450,10 @@ function createDeckActions(doc: Y.Doc): DeckActionHandlers {
             updateTextObjectScale(doc, slideId, objectId, scale),
         updateTextObjectWidth: (slideId: string, objectId: string, width: number) =>
             updateTextObjectWidth(doc, slideId, objectId, width),
+        updateImageObjectSource: (slideId: string, objectId: string, src: string) =>
+            updateImageObjectSource(doc, slideId, objectId, src),
+        updateImageObjectSize: (slideId: string, objectId: string, size: { width: number; height: number }) =>
+            updateImageObjectSize(doc, slideId, objectId, size),
         deleteObjectFromSlide: (slideId: string, objectId: string) => deleteObjectFromSlide(doc, slideId, objectId),
     }
 }
@@ -536,6 +544,30 @@ function updateTextObjectWidth(doc: Y.Doc, slideId: string, objectId: string, wi
     }, 'updateTextObjectWidth')
 }
 
+function updateImageObjectSource(doc: Y.Doc, slideId: string, objectId: string, src: string) {
+    const normalizedSrc = typeof src === 'string' ? src.trim() : ''
+    transactDeck(doc, () => {
+        const yObject = findObject(doc, slideId, objectId)
+        if (!yObject || yObject.get('type') !== 'image') return
+        if (normalizedSrc) {
+            yObject.set('src', normalizedSrc)
+        } else {
+            yObject.delete('src')
+        }
+    }, 'updateImageObjectSource')
+}
+
+function updateImageObjectSize(doc: Y.Doc, slideId: string, objectId: string, size: { width: number; height: number }) {
+    const normalizedWidth = Number.isFinite(size.width) ? Math.max(size.width, MIN_IMAGE_SIZE) : MIN_IMAGE_SIZE
+    const normalizedHeight = Number.isFinite(size.height) ? Math.max(size.height, MIN_IMAGE_SIZE) : MIN_IMAGE_SIZE
+    transactDeck(doc, () => {
+        const yObject = findObject(doc, slideId, objectId)
+        if (!yObject || yObject.get('type') !== 'image') return
+        yObject.set('width', normalizedWidth)
+        yObject.set('height', normalizedHeight)
+    }, 'updateImageObjectSize')
+}
+
 function deleteObjectFromSlide(doc: Y.Doc, slideId: string, objectId: string) {
     transactDeck(doc, () => {
         const { slides } = ensureDeckStructure(doc)
@@ -582,7 +614,9 @@ function createYObject(object: DeckObject): Y.Map<unknown> {
             yObject.set('scale', object.scale)
         }
     } else {
-        yObject.set('src', object.src)
+        if (typeof object.src === 'string' && object.src.trim()) {
+            yObject.set('src', object.src.trim())
+        }
         yObject.set('width', object.width)
         yObject.set('height', object.height)
     }
@@ -612,24 +646,17 @@ function findObject(doc: Y.Doc, slideId: string, objectId: string): Y.Map<unknow
 }
 
 function useProviderSyncStatus(provider: LiveblocksYjsProvider): boolean {
-    const [isSynced, setIsSynced] = useState(() => provider.synced)
-
-    useEffect(() => {
-        // Sync the local flag immediately in case the provider already finished syncing
-        setIsSynced(provider.synced)
-
-        const handleSync = (synced: boolean) => {
-            setIsSynced(synced)
-        }
-
-        provider.on('sync', handleSync)
-
-        return () => {
-            provider.off('sync', handleSync)
-        }
-    }, [provider])
-
-    return isSynced
+    return useSyncExternalStore(
+        (callback) => {
+            const handleSync = () => callback()
+            provider.on('sync', handleSync)
+            return () => {
+                provider.off('sync', handleSync)
+            }
+        },
+        () => provider.synced,
+        () => true,
+    )
 }
 
 function getDeckStructure(doc: Y.Doc): PartialDeckStructure {

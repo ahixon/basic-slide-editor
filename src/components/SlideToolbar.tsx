@@ -1,6 +1,6 @@
 import { Bold, Image, Italic, List, Redo2, Trash2, Type, Undo2, ZoomIn } from 'lucide-react'
-import { useCallback, useEffect, useReducer } from 'react'
-import type { ButtonHTMLAttributes, ChangeEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useReducer, useState } from 'react'
+import type { ButtonHTMLAttributes, ChangeEvent, FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 
 import { useDeckHistory } from '../store'
 import type { Editor } from '@tiptap/core'
@@ -25,10 +25,12 @@ type SlideToolbarProps = {
   onDeleteSelectedObject?: () => void
   canDeleteObject?: boolean
   canAddObjects?: boolean
+  selectedImage?: { id: string; src?: string } | null
+  onSaveSelectedImageSrc?: (src: string) => void
 }
 
 const TOOLBAR_BUTTON_CLASS =
-  'inline-flex items-center gap-2 rounded-sm border border-neutral-300 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+  'inline-flex h-8 items-center gap-2 rounded-sm border border-neutral-300 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
 
 export function SlideToolbar({
   onAddTextbox,
@@ -39,6 +41,8 @@ export function SlideToolbar({
   onDeleteSelectedObject,
   canDeleteObject = false,
   canAddObjects = true,
+  selectedImage = null,
+  onSaveSelectedImageSrc,
 }: SlideToolbarProps) {
   const { undo, redo, canUndo, canRedo } = useDeckHistory()
   const [, forceUpdate] = useReducer((count) => count + 1, 0)
@@ -68,10 +72,13 @@ export function SlideToolbar({
     }
   }, [activeTextEditor])
 
+
   const isTextEditorActive = Boolean(activeTextEditor?.isFocused)
   const isBoldActive = activeTextEditor?.isActive('bold') ?? false
   const isItalicActive = activeTextEditor?.isActive('italic') ?? false
   const isBulletListActive = activeTextEditor?.isActive('bulletList') ?? false
+  const selectedImageKey = selectedImage ? `${selectedImage.id}:${selectedImage.src ?? ''}` : null
+  const showImageToolbar = Boolean(selectedImage && onSaveSelectedImageSrc)
 
   const handleToggleBold = useCallback(() => {
     if (!activeTextEditor) return
@@ -87,6 +94,7 @@ export function SlideToolbar({
     if (!activeTextEditor) return
     activeTextEditor.chain().focus().toggleBulletList().run()
   }, [activeTextEditor])
+
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -136,35 +144,43 @@ export function SlideToolbar({
             <Redo2 size={16} />
           </ToolbarButton>
         </div>
-        {isTextEditorActive && (
+        {(isTextEditorActive || showImageToolbar) && (
           <>
             <span className="h-6 w-px bg-neutral-200 dark:bg-slate-700" aria-hidden="true" />
-            <div className="flex items-center gap-2" role="group" aria-label="Text formatting">
-              <ToolbarButton
-                onClick={handleToggleBold}
-                aria-pressed={isBoldActive}
-                aria-label="Bold"
-                isActive={isBoldActive}
-              >
-                <Bold size={16} />
-              </ToolbarButton>
-              <ToolbarButton
-                onClick={handleToggleItalic}
-                aria-pressed={isItalicActive}
-                aria-label="Italic"
-                isActive={isItalicActive}
-              >
-                <Italic size={16} />
-              </ToolbarButton>
-              <ToolbarButton
-                onClick={handleToggleBulletList}
-                aria-pressed={isBulletListActive}
-                aria-label="Toggle bullet list"
-                isActive={isBulletListActive}
-              >
-                <List size={16} />
-              </ToolbarButton>
-            </div>
+            {isTextEditorActive ? (
+              <div className="flex items-center gap-2" role="group" aria-label="Text formatting">
+                <ToolbarButton
+                  onClick={handleToggleBold}
+                  aria-pressed={isBoldActive}
+                  aria-label="Bold"
+                  isActive={isBoldActive}
+                >
+                  <Bold size={16} />
+                </ToolbarButton>
+                <ToolbarButton
+                  onClick={handleToggleItalic}
+                  aria-pressed={isItalicActive}
+                  aria-label="Italic"
+                  isActive={isItalicActive}
+                >
+                  <Italic size={16} />
+                </ToolbarButton>
+                <ToolbarButton
+                  onClick={handleToggleBulletList}
+                  aria-pressed={isBulletListActive}
+                  aria-label="Toggle bullet list"
+                  isActive={isBulletListActive}
+                >
+                  <List size={16} />
+                </ToolbarButton>
+              </div>
+            ) : showImageToolbar && selectedImage && onSaveSelectedImageSrc ? (
+              <ImageSourceEditor
+                key={selectedImageKey}
+                initialUrl={selectedImage.src ?? ''}
+                onSave={onSaveSelectedImageSrc}
+              />
+            ) : null}
           </>
         )}
         <span className="h-6 w-px bg-neutral-200 dark:bg-slate-700" aria-hidden="true" />
@@ -203,6 +219,50 @@ export function SlideToolbar({
 }
 
 export type { SlideToolbarProps }
+
+type ImageSourceEditorProps = {
+  initialUrl: string
+  onSave: (src: string) => void
+}
+
+function ImageSourceEditor({ initialUrl, onSave }: ImageSourceEditorProps) {
+  const [draft, setDraft] = useState(initialUrl)
+  const trimmedDraft = draft.trim()
+  const trimmedInitial = initialUrl.trim()
+  const canSave = trimmedDraft.length > 0 && trimmedDraft !== trimmedInitial
+
+  const handleSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault()
+      if (!canSave) return
+      onSave(trimmedDraft)
+    },
+    [canSave, onSave, trimmedDraft],
+  )
+
+  const handleChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setDraft(event.target.value)
+  }, [])
+
+  return (
+    <form className="flex flex-wrap items-center gap-2" onSubmit={handleSubmit}>
+      <label className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
+        Image URL
+      </label>
+      <input
+        type="url"
+        name="image-url"
+        value={draft}
+        onChange={handleChange}
+        placeholder="https://example.com/photo.jpg"
+        className="h-8 w-56 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 outline-none transition focus:border-sky-500 focus:ring-0 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+      />
+      <ToolbarButton type="submit" disabled={!canSave}>
+        Save
+      </ToolbarButton>
+    </form>
+  )
+}
 
 type ToolbarButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   isActive?: boolean

@@ -40,7 +40,15 @@ export function SlideEditorView({
   navigateToSlide,
   navigateToDeckRoot,
 }: SlideEditorViewProps) {
-  const { deck, addSlide, deleteSlide, appendObjectToSlide, deleteObjectFromSlide, isSynced } = useDeckDocument()
+  const {
+    deck,
+    addSlide,
+    deleteSlide,
+    appendObjectToSlide,
+    deleteObjectFromSlide,
+    updateImageObjectSource,
+    isSynced,
+  } = useDeckDocument()
   const { slides: slidesById, slideOrder } = deck
   const orderedSlides = useMemo(
     () => slideOrder.map((id) => slidesById[id]).filter((slide): slide is Slide => Boolean(slide)),
@@ -130,7 +138,6 @@ export function SlideEditorView({
       type: 'image',
       x: 280,
       y: 200,
-      src: '/images/placeholder.png',
       width: 240,
       height: 160,
     })
@@ -156,6 +163,39 @@ export function SlideEditorView({
       })
     },
     [activeSlideId],
+  )
+
+  useEffect(() => {
+    if (!activeTextEditor) return
+    if (
+      selectedObject &&
+      selectedObject.slideId === activeTextEditor.slideId &&
+      selectedObject.objectId === activeTextEditor.objectId
+    ) {
+      return
+    }
+    const editor = activeTextEditor.editor
+    if (!editor || editor.isDestroyed) return
+    editor.commands.blur()
+  }, [activeTextEditor, selectedObject])
+
+  const selectedImage = useMemo(() => {
+    if (!selectedObject) return null
+    const slide = slidesById[selectedObject.slideId]
+    if (!slide) return null
+    const object = slide.objects.find((item) => item.id === selectedObject.objectId)
+    if (!object || object.type !== 'image') return null
+    return { slideId: selectedObject.slideId, object }
+  }, [selectedObject, slidesById])
+
+  const handleSaveSelectedImageSrc = useCallback(
+    (src: string) => {
+      if (!selectedImage) return
+      const normalized = src.trim()
+      if (!normalized) return
+      updateImageObjectSource(selectedImage.slideId, selectedImage.object.id, normalized)
+    },
+    [selectedImage, updateImageObjectSource],
   )
 
   const handleDeleteSelectedObject = useCallback(() => {
@@ -215,6 +255,8 @@ export function SlideEditorView({
             onDeleteSelectedObject={selectedObject ? handleDeleteSelectedObject : undefined}
             canDeleteObject={Boolean(selectedObject)}
             canAddObjects={Boolean(activeSlideId)}
+            selectedImage={selectedImage ? { id: selectedImage.object.id, src: selectedImage.object.src } : null}
+            onSaveSelectedImageSrc={selectedImage ? handleSaveSelectedImageSrc : undefined}
           />
           <div className="flex flex-1 min-h-0 min-w-0">
             <SlideViewport
