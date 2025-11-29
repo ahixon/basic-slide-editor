@@ -2,16 +2,15 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties, HTMLAttributes, PointerEvent as ReactPointerEvent } from 'react'
 
 import type { DeckObject, ImageObject, TextObject } from '../store'
-import { MIN_TEXT_WIDTH, useDeckActions, useDeckRuntime, useDeckUndoManager } from '../store'
+import { MIN_TEXT_WIDTH, getTextFragmentKey, transactDeck, useDeckActions, useDeckRuntime, useDeckUndoManager } from '../store'
 import { useRoom } from '@liveblocks/react'
 
 import { useEditor, EditorContent } from '@tiptap/react'
+import type { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { SharedCollaboration } from '../extensions/SharedCollaboration'
 import * as Y from 'yjs'
 import { GripVertical, Scaling } from 'lucide-react'
-const MIN_TEXT_SCALE = 0.25
-const MAX_TEXT_SCALE = 5
 
 export type SlideObjectElementProps = {
   object: DeckObject
@@ -21,6 +20,8 @@ export type SlideObjectElementProps = {
   isSelected?: boolean
   onFocusObject?: (objectId: string) => void
   onBlurObject?: (objectId: string) => void
+  onTextEditorFocusChange?: (payload: { objectId: string; editor: Editor } | null) => void
+  textEditorMode?: 'editable' | 'readonly'
 } & HTMLAttributes<HTMLElement>
 
 export function SlideObjectElement({
@@ -33,6 +34,8 @@ export function SlideObjectElement({
   isSelected = false,
   onFocusObject,
   onBlurObject,
+  onTextEditorFocusChange,
+  textEditorMode = 'readonly',
   ...rest
 }: SlideObjectElementProps) {
   if (object.type === 'text') {
@@ -47,6 +50,8 @@ export function SlideObjectElement({
         isSelected={isSelected}
         onFocusObject={onFocusObject}
         onBlurObject={onBlurObject}
+        onTextEditorFocusChange={onTextEditorFocusChange}
+        textEditorMode={textEditorMode}
         {...rest}
       />
     )
@@ -72,6 +77,8 @@ function SlideTextElement({
   isSelected = false,
   onFocusObject,
   onBlurObject,
+  onTextEditorFocusChange,
+  textEditorMode = 'readonly',
   ...rest
 }: {
   object: TextObject
@@ -83,21 +90,9 @@ function SlideTextElement({
   isSelected?: boolean
   onFocusObject?: (objectId: string) => void
   onBlurObject?: (objectId: string) => void
+  onTextEditorFocusChange?: (payload: { objectId: string; editor: Editor } | null) => void
+  textEditorMode?: 'editable' | 'readonly'
 } & HTMLAttributes<HTMLDivElement>) {
-    const handleFocusCapture = useCallback(() => {
-      onFocusObject?.(object.id)
-    }, [object.id, onFocusObject])
-
-    const handleBlurCapture = useCallback(
-      (event: React.FocusEvent<HTMLDivElement>) => {
-        const nextFocused = event.relatedTarget
-        if (event.currentTarget.contains(nextFocused as Node)) {
-          return
-        }
-        onBlurObject?.(object.id)
-      },
-      [object.id, onBlurObject],
-    )
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [selectionRect, setSelectionRect] = useState<{ width: number; height: number } | null>(null)
   const [resizeState, setResizeState] = useState<{
@@ -116,7 +111,7 @@ function SlideTextElement({
   const { doc } = useDeckRuntime()
   const undoManager = useDeckUndoManager()
   const historyPausedRef = useRef(false)
-  const fragmentKey = useMemo(() => `text-${object.id}`, [object.id])
+  const fragmentKey = useMemo(() => getTextFragmentKey(object.id), [object.id])
   const textFragment = useMemo(() => doc.getXmlFragment(fragmentKey), [doc, fragmentKey])
 
   useEffect(() => {
@@ -125,7 +120,7 @@ function SlideTextElement({
 
   useEffect(() => {
     if (textFragment.length > 0) return
-    doc.transact(() => {
+    transactDeck(doc, () => {
       const paragraph = new Y.XmlElement('paragraph')
       const textNode = new Y.XmlText()
       if (object.text) {
@@ -139,9 +134,10 @@ function SlideTextElement({
   const resolvedScale = Number.isFinite(scale) && scale && scale > 0 ? scale : 1
   const textScale = (() => {
     const value = typeof object.scale === 'number' ? object.scale : 1
-    if (!Number.isFinite(value)) return 1
-    return Math.min(Math.max(value, MIN_TEXT_SCALE), MAX_TEXT_SCALE)
+    if (!Number.isFinite(value) || value <= 0) return 1
+    return value
   })()
+  const isTextEditorEditable = textEditorMode === 'editable'
 
   const positionStyle: CSSProperties = {
     left: object.x,
@@ -179,8 +175,39 @@ function SlideTextElement({
           yUndoOptions: { undoManager },
         }),
       ],
+      editable: isTextEditorEditable,
     },
     [doc, fragmentKey, undoManager],
+  )
+
+  const editorActiveRef = useRef(false)
+
+  useEffect(() => {
+    if (!editor) return
+    editor.setEditable(isTextEditorEditable)
+  }, [editor, isTextEditorEditable])
+
+  const handleFocusCapture = useCallback(() => {
+    onFocusObject?.(object.id)
+    if (onTextEditorFocusChange && editor) {
+      editorActiveRef.current = true
+      onTextEditorFocusChange({ objectId: object.id, editor })
+    }
+  }, [editor, object.id, onFocusObject, onTextEditorFocusChange])
+
+  const handleBlurCapture = useCallback(
+    (event: React.FocusEvent<HTMLDivElement>) => {
+      const nextFocused = event.relatedTarget
+      if (event.currentTarget.contains(nextFocused as Node)) {
+        return
+      }
+      onBlurObject?.(object.id)
+      if (editorActiveRef.current && onTextEditorFocusChange) {
+        editorActiveRef.current = false
+        onTextEditorFocusChange(null)
+      }
+    },
+    [object.id, onBlurObject, onTextEditorFocusChange],
   )
 
   const pauseHistory = useCallback(() => {
@@ -206,7 +233,8 @@ function SlideTextElement({
 
       const rect = node.getBoundingClientRect()
       const startVisualWidth = Math.max(MIN_TEXT_WIDTH, rect.width / resolvedScale)
-      const startScale = Math.max(MIN_TEXT_SCALE, typeof object.scale === 'number' ? object.scale : 1)
+      const startScaleValue = typeof object.scale === 'number' ? object.scale : 1
+      const startScale = Number.isFinite(startScaleValue) && startScaleValue > 0 ? startScaleValue : 1
 
       ;(event.currentTarget as HTMLDivElement).setPointerCapture(event.pointerId)
       pauseHistory()
@@ -232,7 +260,7 @@ function SlideTextElement({
 
       const scaleRatio = nextVisualWidth / resizeState.startVisualWidth
       const rawNextScale = resizeState.startScale * scaleRatio
-      const nextScale = Math.min(Math.max(rawNextScale, MIN_TEXT_SCALE), MAX_TEXT_SCALE)
+      const nextScale = Number.isFinite(rawNextScale) && rawNextScale > 0 ? rawNextScale : resizeState.startScale
 
       updateTextObjectScale(slideId, object.id, nextScale)
     },
@@ -359,8 +387,12 @@ function SlideTextElement({
         room?.history.resume()
         historyPausedRef.current = false
       }
+      if (editorActiveRef.current && onTextEditorFocusChange) {
+        editorActiveRef.current = false
+        onTextEditorFocusChange(null)
+      }
     }
-  }, [room])
+  }, [onTextEditorFocusChange, room])
 
   useLayoutEffect(() => {
     const node = containerRef.current
@@ -381,7 +413,7 @@ function SlideTextElement({
     const observer = new ResizeObserver(() => measure())
     observer.observe(node)
     return () => observer.disconnect()
-  }, [object.id, object.width, object.scale, textScale])
+  }, [object.id, object.width, object.scale, resolvedScale, textScale])
 
   const inactiveHandleClass = 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
   const scaleHandleClassName = enableTextScaling

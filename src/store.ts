@@ -4,7 +4,43 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { LiveblocksYjsProvider } from '@liveblocks/yjs'
 import * as Y from 'yjs'
 
-export const MIN_TEXT_WIDTH = 96
+export const MIN_TEXT_WIDTH = 8
+
+const DECK_HISTORY_ORIGIN = Symbol('deck-history')
+const isDeckHistoryDebuggingEnabled = Boolean(import.meta.env?.DEV)
+
+function logDeckHistory(message: string, payload?: unknown) {
+    if (!isDeckHistoryDebuggingEnabled) return
+    if (typeof payload === 'undefined') {
+        console.debug(`[DeckHistory] ${message}`)
+        return
+    }
+    console.debug(`[DeckHistory] ${message}`, payload)
+}
+
+type DebuggableUndoManager = Y.UndoManager & {
+    undoStack?: unknown[]
+    redoStack?: unknown[]
+}
+
+function getUndoManagerSnapshot(undoManager: Y.UndoManager) {
+    const manager = undoManager as DebuggableUndoManager
+    return {
+        undoDepth: manager.undoStack?.length ?? 'unknown',
+        redoDepth: manager.redoStack?.length ?? 'unknown',
+    }
+}
+
+export function transactDeck<T>(doc: Y.Doc, fn: () => T, debugLabel = 'transactDeck'): T {
+    logDeckHistory(`transact:start:${debugLabel}`)
+    const result = doc.transact(fn, DECK_HISTORY_ORIGIN)
+    logDeckHistory(`transact:end:${debugLabel}`)
+    return result
+}
+
+export function getTextFragmentKey(objectId: string): string {
+    return `text-${objectId}`
+}
 
 const scheduleMicrotask = typeof queueMicrotask === 'function'
     ? queueMicrotask
@@ -60,6 +96,7 @@ export type DeckDocumentApi = {
     updateObjectPosition: (slideId: string, objectId: string, position: { x: number; y: number }) => void
     updateTextObjectScale: (slideId: string, objectId: string, scale: number) => void
     updateTextObjectWidth: (slideId: string, objectId: string, width: number) => void
+    deleteObjectFromSlide: (slideId: string, objectId: string) => void
 }
 
 const DECK_KEY = 'deck'
@@ -94,7 +131,7 @@ function getOrCreateUndoManager(doc: Y.Doc, provider: LiveblocksYjsProvider): Y.
     const scope = collectUndoScope(doc, provider)
     let undoManager = undoManagerCache.get(doc)
     if (!undoManager) {
-        undoManager = new Y.UndoManager(scope, { doc })
+        undoManager = new Y.UndoManager(scope, { doc, trackedOrigins: new Set([DECK_HISTORY_ORIGIN]) })
         undoManagerCache.set(doc, undoManager)
         return undoManager
     }
@@ -185,7 +222,13 @@ export function useDeckHistory() {
                     callback()
                 })
             }
-            const handleStackChange = () => notify()
+            const handleStackChange = (event?: unknown) => {
+                logDeckHistory('stack-change', {
+                    event,
+                    ...getUndoManagerSnapshot(undoManager),
+                })
+                notify()
+            }
             undoManager.on('stack-item-added', handleStackChange)
             undoManager.on('stack-item-popped', handleStackChange)
             undoManager.on('stack-cleared', handleStackChange)
@@ -213,12 +256,29 @@ export function useDeckHistory() {
     const historyState = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
     const undo = useCallback(() => {
+        logDeckHistory('undo:invoke', getUndoManagerSnapshot(undoManager))
         undoManager.undo()
     }, [undoManager])
 
     const redo = useCallback(() => {
+        logDeckHistory('redo:invoke', getUndoManagerSnapshot(undoManager))
         undoManager.redo()
     }, [undoManager])
+
+    useEffect(() => {
+        if (!isDeckHistoryDebuggingEnabled) return
+        const handleAfterTransaction = (transaction: Y.Transaction) => {
+            const originLabel = transaction.origin === DECK_HISTORY_ORIGIN ? 'deck' : transaction.origin ?? 'unknown'
+            logDeckHistory('after-transaction', {
+                origin: originLabel,
+                hasChanged: transaction.changed.size,
+            })
+        }
+        doc.on('afterTransaction', handleAfterTransaction)
+        return () => {
+            doc.off('afterTransaction', handleAfterTransaction)
+        }
+    }, [doc])
 
     return {
         undo,
@@ -366,29 +426,30 @@ function createDeckActions(doc: Y.Doc): DeckActionHandlers {
             updateTextObjectScale(doc, slideId, objectId, scale),
         updateTextObjectWidth: (slideId: string, objectId: string, width: number) =>
             updateTextObjectWidth(doc, slideId, objectId, width),
+        deleteObjectFromSlide: (slideId: string, objectId: string) => deleteObjectFromSlide(doc, slideId, objectId),
     }
 }
 
 function setDeckTitle(doc: Y.Doc, title: string) {
-    doc.transact(() => {
+    transactDeck(doc, () => {
         const { deckMap } = ensureDeckStructure(doc)
         deckMap.set(TITLE_KEY, title)
-    })
+    }, 'setDeckTitle')
 }
 
 function addSlide(doc: Y.Doc, slide: Slide): Slide {
-    doc.transact(() => {
+    transactDeck(doc, () => {
         const { slides, slideOrder } = ensureDeckStructure(doc)
         const ySlide = createYSlide(slide)
         slides.set(slide.id, ySlide)
         slideOrder.push([slide.id])
-    })
+    }, 'addSlide')
     return slide
 }
 
 function deleteSlide(doc: Y.Doc, slideId: string): Slide | undefined {
     let fallback: Slide | undefined
-    doc.transact(() => {
+    transactDeck(doc, () => {
         const { slides, slideOrder } = ensureDeckStructure(doc)
         const ySlide = slides.get(slideId)
         if (!ySlide) return
@@ -408,12 +469,12 @@ function deleteSlide(doc: Y.Doc, slideId: string): Slide | undefined {
                 fallback = ySlideToSlide(fallbackSlide)
             }
         }
-    })
+    }, 'deleteSlide')
     return fallback
 }
 
 function appendObjectToSlide(doc: Y.Doc, slideId: string, object: DeckObject) {
-    doc.transact(() => {
+    transactDeck(doc, () => {
         const { slides } = ensureDeckStructure(doc)
         const ySlide = slides.get(slideId)
         if (!ySlide) return
@@ -422,34 +483,53 @@ function appendObjectToSlide(doc: Y.Doc, slideId: string, object: DeckObject) {
         if (!order.toArray().includes(object.id)) {
             order.push([object.id])
         }
-    })
+        if (object.type === 'text') {
+            ensureTextFragmentInitialized(doc, object)
+        }
+    }, 'appendObjectToSlide')
 }
 
 function updateObjectPosition(doc: Y.Doc, slideId: string, objectId: string, position: { x: number; y: number }) {
-    doc.transact(() => {
+    transactDeck(doc, () => {
         const yObject = findObject(doc, slideId, objectId)
         if (!yObject) return
         yObject.set('x', position.x)
         yObject.set('y', position.y)
-    })
+    }, 'updateObjectPosition')
 }
 
 function updateTextObjectScale(doc: Y.Doc, slideId: string, objectId: string, scale: number) {
-    const normalizedScale = Number.isFinite(scale) ? Math.min(Math.max(scale, 0.1), 8) : 1
-    doc.transact(() => {
+    const normalizedScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+    transactDeck(doc, () => {
         const yObject = findObject(doc, slideId, objectId)
         if (!yObject || yObject.get('type') !== 'text') return
         yObject.set('scale', normalizedScale)
-    })
+    }, 'updateTextObjectScale')
 }
 
 function updateTextObjectWidth(doc: Y.Doc, slideId: string, objectId: string, width: number) {
     const normalizedWidth = Number.isFinite(width) ? Math.max(width, MIN_TEXT_WIDTH) : MIN_TEXT_WIDTH
-    doc.transact(() => {
+    transactDeck(doc, () => {
         const yObject = findObject(doc, slideId, objectId)
         if (!yObject || yObject.get('type') !== 'text') return
         yObject.set('width', normalizedWidth)
-    })
+    }, 'updateTextObjectWidth')
+}
+
+function deleteObjectFromSlide(doc: Y.Doc, slideId: string, objectId: string) {
+    transactDeck(doc, () => {
+        const { slides } = ensureDeckStructure(doc)
+        const ySlide = slides.get(slideId)
+        if (!ySlide) return
+        const { objects, order } = ensureSlideContainers(ySlide)
+        if (!objects.has(objectId)) return
+        objects.delete(objectId)
+        const orderedIds = order.toArray()
+        const removalIndex = orderedIds.indexOf(objectId)
+        if (removalIndex >= 0) {
+            order.delete(removalIndex, 1)
+        }
+    }, 'deleteObjectFromSlide')
 }
 
 function createYSlide(slide: Slide): Y.Map<unknown> {
@@ -490,6 +570,19 @@ function createYObject(object: DeckObject): Y.Map<unknown> {
     return yObject
 }
 
+function ensureTextFragmentInitialized(doc: Y.Doc, object: TextObject) {
+    const fragment = doc.getXmlFragment(getTextFragmentKey(object.id))
+    if (fragment.length > 0) return
+
+    const paragraph = new Y.XmlElement('paragraph')
+    const textNode = new Y.XmlText()
+    if (object.text) {
+        textNode.insert(0, object.text)
+    }
+    paragraph.insert(0, [textNode])
+    fragment.insert(0, [paragraph])
+}
+
 function findObject(doc: Y.Doc, slideId: string, objectId: string): Y.Map<unknown> | null {
     const { slides } = ensureDeckStructure(doc)
     const ySlide = slides.get(slideId)
@@ -499,9 +592,12 @@ function findObject(doc: Y.Doc, slideId: string, objectId: string): Y.Map<unknow
 }
 
 function useProviderSyncStatus(provider: LiveblocksYjsProvider): boolean {
-    const [isSynced, setIsSynced] = useState(() => provider.getStatus() === 'synchronized')
+    const [isSynced, setIsSynced] = useState(() => provider.synced)
 
     useEffect(() => {
+        // Sync the local flag immediately in case the provider already finished syncing
+        setIsSynced(provider.synced)
+
         const handleSync = (synced: boolean) => {
             setIsSynced(synced)
         }

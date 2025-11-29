@@ -18,21 +18,19 @@ const RootLayout = () => {
     </main>
   )
 
-  if (isPresenterRoute) {
-    return content
+  if (!activeDeckId) {
+    return <DeckNavigationFrame>{content}</DeckNavigationFrame>
   }
 
-  if (activeDeckId) {
-    return (
-      <LiveblocksProvider publicApiKey={import.meta.env.VITE_LIVEBLOCKS_KEY}>
-        <RoomProvider id={`deck-${activeDeckId}`}>
-          <DeckNavigationFrame>{content}</DeckNavigationFrame>
-        </RoomProvider>
-      </LiveblocksProvider>
-    )
-  }
+  const deckScopedContent = isPresenterRoute ? content : <DeckNavigationFrame>{content}</DeckNavigationFrame>
 
-  return <DeckNavigationFrame>{content}</DeckNavigationFrame>
+  return (
+    <LiveblocksProvider publicApiKey={import.meta.env.VITE_LIVEBLOCKS_KEY}>
+      <RoomProvider id={`deck-${activeDeckId}`}>
+        {deckScopedContent}
+      </RoomProvider>
+    </LiveblocksProvider>
+  )
 }
 
 export const Route = createRootRoute({ component: RootLayout })

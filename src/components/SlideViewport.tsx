@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Slide } from '../store'
 import { SlideEditorCanvas } from './SlideEditorCanvas'
 import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from './slideDimensions'
+import type { Editor } from '@tiptap/core'
 
 const SLIDE_VERTICAL_GAP = 24
 const VIEWPORT_PADDING = 32 // matches p-4 (16px * 2)
@@ -13,6 +14,8 @@ type SlideViewportProps = {
   onVisibleChange: (slideId: string) => void
   scaleOverride?: number | null
   isLoading?: boolean
+  onActiveTextEditorChange?: (payload: { slideId: string; objectId: string; editor: Editor } | null) => void
+  onSelectionChange?: (payload: { slideId: string; objectId: string | null }) => void
 }
 
 export function SlideViewport({
@@ -21,6 +24,8 @@ export function SlideViewport({
   onVisibleChange,
   scaleOverride = null,
   isLoading = false,
+  onActiveTextEditorChange,
+  onSelectionChange,
 }: SlideViewportProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const activeSlideIdRef = useRef<string | null>(activeSlideId)
@@ -187,7 +192,13 @@ export function SlideViewport({
                   }`}
                   style={{ width: scaledWidth, height: scaledHeight }}
                 >
-                  <SlideEditorCanvas slide={slide} scale={slideScale} />
+                  <SlideEditorCanvas
+                    slide={slide}
+                    scale={slideScale}
+                    onTextEditorFocusChange={onActiveTextEditorChange}
+                    isActive={isActiveSlide}
+                    onSelectedObjectChange={onSelectionChange}
+                  />
                 </div>
               )
             })}

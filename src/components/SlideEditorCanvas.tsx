@@ -6,6 +6,7 @@ import { useDeckActions } from '../store'
 import { useRoom } from '@liveblocks/react'
 import { SlideObjectElement } from './SlideObjectElement'
 import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from './slideDimensions'
+import type { Editor } from '@tiptap/core'
 
 type SlideEditorCanvasProps = {
   slide: Slide
@@ -13,6 +14,9 @@ type SlideEditorCanvasProps = {
   className?: string
   style?: CSSProperties
   rounded?: boolean
+  onTextEditorFocusChange?: (payload: { slideId: string; objectId: string; editor: Editor } | null) => void
+  isActive?: boolean
+  onSelectedObjectChange?: (payload: { slideId: string; objectId: string | null }) => void
 }
 
 type DragState = {
@@ -34,6 +38,9 @@ export function SlideEditorCanvas({
   className = '',
   style,
   rounded = true,
+  onTextEditorFocusChange,
+  isActive = true,
+  onSelectedObjectChange,
 }: SlideEditorCanvasProps) {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [dragState, setDragState] = useState<DragState | null>(null)
@@ -44,7 +51,7 @@ export function SlideEditorCanvas({
 
   const scaledWidth = SLIDE_BASE_WIDTH * scale
   const scaledHeight = SLIDE_BASE_HEIGHT * scale
-  const roundedShellClass = rounded ? 'rounded-[32px] shadow-inner' : ''
+  const roundedShellClass = rounded ? 'shadow-inner' : ''
 
   const activeObjectId = dragState?.activated ? dragState.objectId : focusedObjectId
 
@@ -206,6 +213,18 @@ export function SlideEditorCanvas({
     setFocusedObjectId((current) => (current === objectId ? null : current))
   }, [])
 
+  const handleTextEditorFocusChange = useCallback(
+    (payload: { objectId: string; editor: Editor } | null) => {
+      if (!onTextEditorFocusChange) return
+      if (!payload) {
+        onTextEditorFocusChange(null)
+        return
+      }
+      onTextEditorFocusChange({ ...payload, slideId: slide.id })
+    },
+    [onTextEditorFocusChange, slide.id],
+  )
+
   const handleCanvasPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.target === event.currentTarget) {
       setFocusedObjectId(null)
@@ -230,6 +249,23 @@ export function SlideEditorCanvas({
     }
   }, [room])
 
+  useEffect(() => {
+    if (!onSelectedObjectChange) return
+    if (!isActive) {
+      onSelectedObjectChange({ slideId: slide.id, objectId: null })
+      return
+    }
+    onSelectedObjectChange({ slideId: slide.id, objectId: activeObjectId ?? null })
+  }, [activeObjectId, isActive, onSelectedObjectChange, slide.id])
+
+  useEffect(() => {
+    return () => {
+      if (onSelectedObjectChange) {
+        onSelectedObjectChange({ slideId: slide.id, objectId: null })
+      }
+    }
+  }, [onSelectedObjectChange, slide.id])
+
   return (
     <article
       className={`slide-editor-canvas relative overflow-hidden ${roundedShellClass} bg-white text-left text-slate-900 ${className}`}
@@ -251,7 +287,7 @@ export function SlideEditorCanvas({
         }}
       >
         {slide.objects.map((object) => {
-          const isActive = activeObjectId === object.id
+          const isObjectSelected = isActive && activeObjectId === object.id
           const selectionClass = object.type === 'text' ? 'select-text' : 'select-none'
           return (
             <SlideObjectElement
@@ -260,7 +296,7 @@ export function SlideEditorCanvas({
               slideId={slide.id}
               scale={scale}
               enableTextScaling={object.type === 'text'}
-              isSelected={isActive}
+              isSelected={isObjectSelected}
               onPointerDown={createPointerDownHandler(object)}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
@@ -269,14 +305,11 @@ export function SlideEditorCanvas({
               style={{ touchAction: 'none' }}
               onFocusObject={handleObjectFocus}
               onBlurObject={handleObjectBlur}
+              onTextEditorFocusChange={handleTextEditorFocusChange}
+              textEditorMode="editable"
             />
           )
         })}
-        {!slide.objects.length && (
-          <div className={`absolute inset-0 flex items-center justify-center border-2 border-dashed border-slate-200 text-xl font-semibold uppercase tracking-wide text-slate-300 ${rounded ? 'rounded-2xl' : ''}`}>
-            Drop objects to start designing
-          </div>
-        )}
       </div>
     </article>
   )

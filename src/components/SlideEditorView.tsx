@@ -5,6 +5,7 @@ import { useDeckDocument } from '../store'
 import { SlideSidebar } from './SlideSidebar'
 import { SlideToolbar } from './SlideToolbar'
 import { SlideViewport } from './SlideViewport'
+import type { Editor } from '@tiptap/core'
 
 type NavigateOptions = {
   replace?: boolean
@@ -14,6 +15,17 @@ type SlideEditorViewProps = {
   slideId?: string
   navigateToSlide: (slideId: string, options?: NavigateOptions) => void
   navigateToDeckRoot: (options?: NavigateOptions) => void
+}
+
+type ActiveTextEditor = {
+  slideId: string
+  objectId: string
+  editor: Editor
+}
+
+type SelectedObject = {
+  slideId: string
+  objectId: string
 }
 
 function generateId(seed: string) {
@@ -28,7 +40,7 @@ export function SlideEditorView({
   navigateToSlide,
   navigateToDeckRoot,
 }: SlideEditorViewProps) {
-  const { deck, addSlide, deleteSlide, appendObjectToSlide, isSynced } = useDeckDocument()
+  const { deck, addSlide, deleteSlide, appendObjectToSlide, deleteObjectFromSlide, isSynced } = useDeckDocument()
   const { slides: slidesById, slideOrder } = deck
   const orderedSlides = useMemo(
     () => slideOrder.map((id) => slidesById[id]).filter((slide): slide is Slide => Boolean(slide)),
@@ -37,6 +49,8 @@ export function SlideEditorView({
   const totalSlides = slideOrder.length
   const isStorageLoading = !isSynced
   const [zoomOverride, setZoomOverride] = useState<number | null>(null)
+  const [activeTextEditor, setActiveTextEditor] = useState<ActiveTextEditor | null>(null)
+  const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null)
 
   const activeSlideId = useMemo(() => {
     if (!totalSlides) return null
@@ -73,17 +87,7 @@ export function SlideEditorView({
   const handleAddSlide = useCallback(() => {
     const newSlide: Slide = {
       id: generateId('slide'),
-      objects: [
-        {
-          id: generateId('text'),
-          type: 'text',
-          x: 96,
-          y: 96,
-          text: 'Describe your idea...',
-          width: 520,
-          scale: 1,
-        },
-      ],
+      objects: [],
     }
 
     const createdSlide = addSlide(newSlide)
@@ -114,9 +118,9 @@ export function SlideEditorView({
       type: 'text',
       x: 80,
       y: 80,
-      text: 'New textbox',
-      width: 360,
-      scale: 1,
+      text: 'Click to edit text',
+      // width: 360,
+      scale: 5,
     })
   }, [appendObjectToActiveSlide])
 
@@ -131,6 +135,58 @@ export function SlideEditorView({
       height: 160,
     })
   }, [appendObjectToActiveSlide])
+
+  const handleActiveTextEditorChange = useCallback((payload: ActiveTextEditor | null) => {
+    setActiveTextEditor(payload)
+  }, [])
+
+  const handleSelectionChange = useCallback(
+    ({ slideId: sourceSlideId, objectId }: { slideId: string; objectId: string | null }) => {
+      setSelectedObject((current) => {
+        if (objectId) {
+          if (sourceSlideId !== activeSlideId) {
+            return current
+          }
+          return { slideId: sourceSlideId, objectId }
+        }
+        if (current?.slideId === sourceSlideId) {
+          return null
+        }
+        return current
+      })
+    },
+    [activeSlideId],
+  )
+
+  const handleDeleteSelectedObject = useCallback(() => {
+    if (!selectedObject) return
+    if (selectedObject.slideId !== activeSlideId) return
+    deleteObjectFromSlide(selectedObject.slideId, selectedObject.objectId)
+    setSelectedObject(null)
+  }, [activeSlideId, deleteObjectFromSlide, selectedObject])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const wantsDelete = event.key === 'Delete' || event.key === 'Backspace'
+      if (!wantsDelete) return
+
+      const target = event.target as HTMLElement | null
+      if (target) {
+        const tagName = target.tagName
+        const isEditable = tagName === 'INPUT' || tagName === 'TEXTAREA' || target.isContentEditable
+        if (isEditable) return
+      }
+
+      if (activeTextEditor?.editor?.isFocused) return
+      if (!selectedObject || selectedObject.slideId !== activeSlideId) return
+
+      event.preventDefault()
+      handleDeleteSelectedObject()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [activeSlideId, activeTextEditor, handleDeleteSelectedObject, selectedObject])
 
   return (
     <section className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden bg-slate-50 p-4 dark:bg-slate-950">
@@ -155,6 +211,9 @@ export function SlideEditorView({
             onAddImage={handleAddImage}
             zoomOverride={zoomOverride}
             onZoomOverrideChange={setZoomOverride}
+            activeTextEditor={activeTextEditor?.editor ?? null}
+            onDeleteSelectedObject={selectedObject ? handleDeleteSelectedObject : undefined}
+            canDeleteObject={Boolean(selectedObject)}
           />
           <div className="flex flex-1 min-h-0 min-w-0">
             <SlideViewport
@@ -163,6 +222,8 @@ export function SlideEditorView({
               onVisibleChange={updateVisibleSlide}
               scaleOverride={zoomOverride}
               isLoading={isStorageLoading}
+              onActiveTextEditorChange={handleActiveTextEditorChange}
+              onSelectionChange={handleSelectionChange}
             />
           </div>
         </div>

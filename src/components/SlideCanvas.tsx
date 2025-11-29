@@ -43,13 +43,6 @@ export function SlideCanvas({
         {slide.objects.map((object) => (
           <SlideObjectElement key={object.id} object={object} />
         ))}
-        {!slide.objects.length && (
-          <div
-            className={`absolute inset-0 flex items-center justify-center border-2 border-dashed border-slate-200 text-xl font-semibold uppercase tracking-wide text-slate-300 ${rounded ? 'rounded-2xl' : ''}`}
-          >
-            Drop objects to start designing
-          </div>
-        )}
       </div>
     </article>
   )

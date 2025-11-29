@@ -1,8 +1,9 @@
-import { Image, Redo2, Type, Undo2, ZoomIn } from 'lucide-react'
-import { useEffect } from 'react'
-import type { ChangeEvent } from 'react'
+import { Bold, Image, Italic, List, Redo2, Trash2, Type, Undo2, ZoomIn } from 'lucide-react'
+import { useCallback, useEffect, useReducer } from 'react'
+import type { ButtonHTMLAttributes, ChangeEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 
 import { useDeckHistory } from '../store'
+import type { Editor } from '@tiptap/core'
 
 const ZOOM_OPTIONS = [
   { label: 'Fit', value: 'auto' },
@@ -20,15 +21,25 @@ type SlideToolbarProps = {
   onAddImage: () => void
   zoomOverride: number | null
   onZoomOverrideChange: (value: number | null) => void
+  activeTextEditor?: Editor | null
+  onDeleteSelectedObject?: () => void
+  canDeleteObject?: boolean
 }
+
+const TOOLBAR_BUTTON_CLASS =
+  'inline-flex items-center gap-2 rounded-sm border border-neutral-300 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
 
 export function SlideToolbar({
   onAddTextbox,
   onAddImage,
   zoomOverride,
   onZoomOverrideChange,
+  activeTextEditor = null,
+  onDeleteSelectedObject,
+  canDeleteObject = false,
 }: SlideToolbarProps) {
   const { undo, redo, canUndo, canRedo } = useDeckHistory()
+  const [, forceUpdate] = useReducer((count) => count + 1, 0)
 
   const handleZoomChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const { value } = event.target
@@ -40,8 +51,40 @@ export function SlideToolbar({
     onZoomOverrideChange(Number.isFinite(numericValue) ? numericValue : null)
   }
 
-  const toolbarButtonClass =
-    'inline-flex items-center gap-2 rounded-sm border border-neutral-300 px-1 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+  useEffect(() => {
+    if (!activeTextEditor) return
+    const rerender = () => forceUpdate()
+    activeTextEditor.on('selectionUpdate', rerender)
+    activeTextEditor.on('transaction', rerender)
+    activeTextEditor.on('focus', rerender)
+    activeTextEditor.on('blur', rerender)
+    return () => {
+      activeTextEditor.off('selectionUpdate', rerender)
+      activeTextEditor.off('transaction', rerender)
+      activeTextEditor.off('focus', rerender)
+      activeTextEditor.off('blur', rerender)
+    }
+  }, [activeTextEditor])
+
+  const isTextEditorActive = Boolean(activeTextEditor?.isFocused)
+  const isBoldActive = activeTextEditor?.isActive('bold') ?? false
+  const isItalicActive = activeTextEditor?.isActive('italic') ?? false
+  const isBulletListActive = activeTextEditor?.isActive('bulletList') ?? false
+
+  const handleToggleBold = useCallback(() => {
+    if (!activeTextEditor) return
+    activeTextEditor.chain().focus().toggleBold().run()
+  }, [activeTextEditor])
+
+  const handleToggleItalic = useCallback(() => {
+    if (!activeTextEditor) return
+    activeTextEditor.chain().focus().toggleItalic().run()
+  }, [activeTextEditor])
+
+  const handleToggleBulletList = useCallback(() => {
+    if (!activeTextEditor) return
+    activeTextEditor.chain().focus().toggleBulletList().run()
+  }, [activeTextEditor])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -84,42 +127,58 @@ export function SlideToolbar({
     <div className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900">
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => undo()}
-            className={toolbarButtonClass}
-            disabled={!canUndo}
-            aria-label="Undo"
-          >
+          <ToolbarButton onClick={() => undo()} disabled={!canUndo} aria-label="Undo">
             <Undo2 size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => redo()}
-            className={toolbarButtonClass}
-            disabled={!canRedo}
-            aria-label="Redo"
-          >
+          </ToolbarButton>
+          <ToolbarButton onClick={() => redo()} disabled={!canRedo} aria-label="Redo">
             <Redo2 size={16} />
-          </button>
+          </ToolbarButton>
         </div>
+        {isTextEditorActive && (
+          <>
+            <span className="h-6 w-px bg-neutral-200 dark:bg-slate-700" aria-hidden="true" />
+            <div className="flex items-center gap-2" role="group" aria-label="Text formatting">
+              <ToolbarButton
+                onClick={handleToggleBold}
+                aria-pressed={isBoldActive}
+                aria-label="Bold"
+                isActive={isBoldActive}
+              >
+                <Bold size={16} />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={handleToggleItalic}
+                aria-pressed={isItalicActive}
+                aria-label="Italic"
+                isActive={isItalicActive}
+              >
+                <Italic size={16} />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={handleToggleBulletList}
+                aria-pressed={isBulletListActive}
+                aria-label="Toggle bullet list"
+                isActive={isBulletListActive}
+              >
+                <List size={16} />
+              </ToolbarButton>
+            </div>
+          </>
+        )}
         <span className="h-6 w-px bg-neutral-200 dark:bg-slate-700" aria-hidden="true" />
-        <button
-          type="button"
-          onClick={onAddTextbox}
-          className={toolbarButtonClass}
-          aria-label="Add textbox"
-        >
+        <ToolbarButton onClick={onAddTextbox} aria-label="Add textbox">
           <Type size={16} />
-        </button>
-        <button
-          type="button"
-          onClick={onAddImage}
-          className={toolbarButtonClass}
-          aria-label="Add image"
-        >
+        </ToolbarButton>
+        <ToolbarButton onClick={onAddImage} aria-label="Add image">
           <Image size={16} />
-        </button>
+        </ToolbarButton>
+        <ToolbarButton
+          onClick={() => onDeleteSelectedObject?.()}
+          disabled={!canDeleteObject}
+          aria-label="Delete selected object"
+        >
+          <Trash2 size={16} />
+        </ToolbarButton>
       </div>
       <div className="ml-auto flex items-center gap-2 text-sm text-neutral-600 dark:text-slate-200">
         <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-slate-400">
@@ -142,3 +201,44 @@ export function SlideToolbar({
 }
 
 export type { SlideToolbarProps }
+
+type ToolbarButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  isActive?: boolean
+  children: ReactNode
+}
+
+function ToolbarButton({
+  isActive = false,
+  className = '',
+  type,
+  children,
+  onMouseDown,
+  ...rest
+}: ToolbarButtonProps) {
+  const activeClass = isActive
+    ? 'border-sky-400 bg-sky-50 text-sky-600 dark:border-sky-500 dark:bg-slate-800 dark:text-sky-200'
+    : ''
+
+  const resolvedType = type ?? 'button'
+
+  const handleMouseDown = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      onMouseDown?.(event)
+      if (!event.defaultPrevented) {
+        event.preventDefault()
+      }
+    },
+    [onMouseDown],
+  )
+
+  return (
+    <button
+      type={resolvedType}
+      className={`${TOOLBAR_BUTTON_CLASS} ${activeClass} ${className}`.trim()}
+      onMouseDown={handleMouseDown}
+      {...rest}
+    >
+      {children}
+    </button>
+  )
+}

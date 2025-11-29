@@ -6,7 +6,6 @@ import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from '../../components/slideDimen
 import type { Slide } from '../../store'
 import { useDeckState } from '../../store'
 import { Expand } from 'lucide-react'
-import { LiveblocksProvider, RoomProvider } from '@liveblocks/react'
 
 type PresenterLoaderData = {
   deckId: string
@@ -24,13 +23,7 @@ export const Route = createFileRoute('/decks/$deckId/presenter')({
 function PresenterConsole() {
   const { deckId } = Route.useLoaderData() as PresenterLoaderData
 
-  return (
-    <LiveblocksProvider publicApiKey={import.meta.env.VITE_LIVEBLOCKS_KEY}>
-      <RoomProvider id={`deck-${deckId}`}>
-        <PresenterRoom deckId={deckId} />
-      </RoomProvider>
-    </LiveblocksProvider>
-  )
+  return <PresenterRoom deckId={deckId} />
 }
 
 function PresenterRoom({ deckId }: { deckId: string }) {
