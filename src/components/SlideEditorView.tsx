@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { EditorView } from 'prosemirror-view'
 
 import type { DeckObject, Slide } from '../store'
 import { useDeckDocument } from '../store'
@@ -176,7 +175,7 @@ export function SlideEditorView({
       return
     }
     const view = activeTextEditor.editor.view
-    if (!view || isEditorViewDestroyed(view)) return
+    if (!view || view.destroyed) return
     view.dom.blur()
   }, [activeTextEditor, selectedObject])
 
@@ -286,7 +285,3 @@ const SlideSidebarFallback = () => (
     </div>
   </div>
 )
-
-function isEditorViewDestroyed(view: EditorView): boolean {
-  return Boolean((view as EditorView & { destroyed?: boolean }).destroyed)
-}

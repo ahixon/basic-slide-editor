@@ -12,7 +12,6 @@ export const MIN_IMAGE_SIZE = 16
 const DECK_HISTORY_ORIGIN = Symbol('deck-history')
 
 export function transactDeck<T>(doc: Y.Doc, fn: () => T, _debugLabel = 'transactDeck'): T {
-    void _debugLabel
     const result = doc.transact(fn, DECK_HISTORY_ORIGIN)
     return result
 }
@@ -137,31 +136,26 @@ function createDeckCaptureTransaction() {
     }
 }
 
-function collectUndoScope(doc: Y.Doc, provider: LiveblocksYjsProvider): Y.AbstractType<unknown>[] {
-    const scope: Y.AbstractType<unknown>[] = []
+function collectUndoScope(doc: Y.Doc, provider: LiveblocksYjsProvider): (Y.Doc | Y.AbstractType<unknown>)[] {
+    const scope: (Y.Doc | Y.AbstractType<unknown>)[] = [doc]
 
     doc.share.forEach((type, key) => {
         if (shouldIncludeShareEntry(key)) {
-            scope.push(type as Y.AbstractType<unknown>)
+            scope.push(type)
         }
     })
 
     provider.subdocHandlers.forEach((handler) => {
-        const subDoc = getHandlerDoc(handler)
-        if (!subDoc) return
+        const subDoc = handler.doc
+        scope.push(subDoc)
         subDoc.share.forEach((type, key) => {
             if (shouldIncludeShareEntry(key)) {
-                scope.push(type as Y.AbstractType<unknown>)
+                scope.push(type)
             }
         })
     })
 
     return scope
-}
-
-function getHandlerDoc(handler: unknown): Y.Doc | null {
-    const docCandidate = (handler as { doc?: Y.Doc } | undefined)?.doc
-    return docCandidate ?? null
 }
 
 function shouldIncludeShareEntry(key?: string) {

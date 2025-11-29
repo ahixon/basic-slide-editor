@@ -6,9 +6,6 @@ import { Doc, UndoManager as YUndoManager, XmlElement, XmlFragment as YXmlFragme
 
 type YSyncOpts = Parameters<typeof ySyncPlugin>[1]
 type YUndoOpts = Parameters<typeof yUndoPlugin>[0]
-type YUndoOptsExtended = YUndoOpts & {
-  captureTransaction?: (transaction: Transaction) => boolean
-}
 
 type StackItemEvent = {
   stackItem: { meta: Map<unknown, unknown> }
@@ -50,7 +47,7 @@ export function createSharedCollaborationPlugins(options: SharedCollaborationOpt
     throw new Error('SharedCollaboration requires a Yjs fragment or document/field pair')
   }
 
-  const userCaptureTransaction = (options.yUndoOptions as YUndoOptsExtended | undefined)?.captureTransaction
+  const userCaptureTransaction = options.yUndoOptions?.captureTransaction
   let editorUndoManagerRef: UndoManager | null = null
 
   const captureTransaction = (transaction: Transaction) => {
@@ -58,7 +55,7 @@ export function createSharedCollaborationPlugins(options: SharedCollaborationOpt
     const changedParents = transaction.changedParentTypes?.size ?? 0
     const origin = transaction.origin as PluginKey | undefined
     const isYSyncOrigin =
-      origin === ySyncPluginKey || (!!origin && origin instanceof PluginKey && pluginKeysMatch(origin, ySyncPluginKey))
+      origin === ySyncPluginKey || (!!origin && origin instanceof PluginKey && origin.key === ySyncPluginKey.key)
 
     if (!transactionTouchesXmlContent(transaction)) {
       return false
@@ -79,23 +76,14 @@ export function createSharedCollaborationPlugins(options: SharedCollaborationOpt
     return typeof userCaptureTransaction === 'function' ? userCaptureTransaction(transaction) : true
   }
 
-  const yUndoOptions: YUndoOptsExtended = {
-    ...(options.yUndoOptions as YUndoOptsExtended),
+  const yUndoPluginInstance = yUndoPlugin({
+    ...options.yUndoOptions,
     captureTransaction,
-  }
-
-  const yUndoPluginInstance = yUndoPlugin(yUndoOptions)
+  })
 
   yUndoPluginInstance.spec.view = (view: EditorView) => {
     const yState = ySyncPluginKey.getState(view.state)
     const undoState = yUndoPluginKey.getState(view.state)
-
-    if (!yState || !undoState) {
-      return {
-        destroy: () => undefined,
-      }
-    }
-
     const undoManager = undoState.undoManager
 
     if (!undoManager) {
@@ -153,14 +141,3 @@ export function createSharedCollaborationPlugins(options: SharedCollaborationOpt
 }
 
 export { redo, undo, ySyncPluginKey, yUndoPluginKey }
-
-function pluginKeysMatch(first: PluginKey | undefined, second: PluginKey | undefined): boolean {
-  if (!first || !second) return false
-  const firstKey = readPluginKeyIdentifier(first)
-  const secondKey = readPluginKeyIdentifier(second)
-  return Boolean(firstKey && secondKey && firstKey === secondKey)
-}
-
-function readPluginKeyIdentifier(key: PluginKey): string | undefined {
-  return (key as PluginKey & { key?: string }).key
-}

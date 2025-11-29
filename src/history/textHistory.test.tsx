@@ -8,9 +8,6 @@ import { ySyncPluginKey } from '../extensions/SharedCollaboration'
 import { ensureTextFragmentInitialized, getTextFragmentKey } from '../store'
 import { ensureHistoryBridge, getTextUndoManager, registerDeckUndoManager, TEXT_HISTORY_ORIGIN } from './textHistory'
 
-type TransactionSnapshot = { origin: unknown; changed: number; parents: number }
-type TransactionSummary = TransactionSnapshot | null
-
 function waitForEditorTick() {
   return new Promise((resolve) => setTimeout(resolve, 0))
 }
@@ -91,8 +88,8 @@ describe('text history bridge', () => {
   it('retains redo stack after undoing a text object addition even when the editor tears down', async () => {
     const doc = new Y.Doc()
     ensureHistoryBridge(doc)
-    const transactions: TransactionSnapshot[] = []
-    let lastTransaction: TransactionSummary = null
+    const transactions: Array<{ origin: unknown; changed: number; parents: number }> = []
+    let lastTransaction: { origin: unknown; changed: number; parents: number } | null = null
     doc.on('afterTransaction', (transaction) => {
       const record = {
         origin: transaction.origin,
@@ -119,7 +116,7 @@ describe('text history bridge', () => {
         return result
       }
     }
-    const stackClears: Array<{ undoStackCleared: boolean; redoStackCleared: boolean; lastTransaction: TransactionSummary }> = []
+    const stackClears: Array<{ undoStackCleared: boolean; redoStackCleared: boolean; lastTransaction: typeof lastTransaction }> = []
     deckUndoManager.on('stack-cleared', (event) => {
       stackClears.push({ ...event, lastTransaction })
     })
