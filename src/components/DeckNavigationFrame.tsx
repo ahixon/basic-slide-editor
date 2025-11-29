@@ -98,6 +98,8 @@ const DeckPresenceSection = ({ deckId }: { deckId: string }) => {
         to="/decks/$deckId/presenter"
         params={{ deckId }}
         className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-3 text-sm font-semibold text-neutral-700 transition hover:border-sky-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-sky-500"
+        target="_blank"
+        rel="noreferrer"
       >
         <Presentation />
       </Link>
