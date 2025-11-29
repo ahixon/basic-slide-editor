@@ -1,6 +1,6 @@
 import { useRoom } from '@liveblocks/react'
 import { getYjsProviderForRoom } from '@liveblocks/yjs'
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import type { LiveblocksYjsProvider } from '@liveblocks/yjs'
 import * as Y from 'yjs'
 
@@ -10,119 +10,10 @@ export const MIN_TEXT_WIDTH = 8
 export const MIN_IMAGE_SIZE = 16
 
 const DECK_HISTORY_ORIGIN = Symbol('deck-history')
-const isDeckHistoryDebuggingEnabled = Boolean(import.meta.env?.DEV)
 
-function logDeckHistory(message: string, payload?: unknown) {
-    if (!isDeckHistoryDebuggingEnabled) return
-    const logFn = message === 'stack-change' ? console.trace : console.debug
-    if (typeof payload === 'undefined') {
-        logFn(`[DeckHistory] ${message}`)
-        return
-    }
-    logFn(`[DeckHistory] ${message}`, payload)
-}
-
-function formatTransactionOrigin(origin: unknown) {
-    if (origin === DECK_HISTORY_ORIGIN) return 'deck'
-    if (typeof origin === 'string') return origin
-    const pluginKey = getPluginKeyName(origin)
-    if (pluginKey) return pluginKey
-    if (typeof origin === 'symbol') return origin.description ?? origin.toString()
-    if (typeof origin === 'function') return origin.name || 'function'
-    if (origin && typeof origin === 'object') {
-        return origin.constructor?.name ?? 'object'
-    }
-    return origin ?? 'unknown'
-}
-
-type PluginOrigin = {
-    key?: unknown
-    name?: unknown
-}
-
-function readString(value: unknown): string | undefined {
-    return typeof value === 'string' ? value : undefined
-}
-
-function getPluginKeyName(origin: unknown, seen = new Set<unknown>()): string | undefined {
-    if (!origin || seen.has(origin)) return undefined
-    if (typeof origin === 'string') return origin
-    if (typeof origin === 'symbol') return origin.description ?? origin.toString()
-    if (typeof origin === 'function') {
-        const functionCandidate = origin as PluginOrigin
-        return readString(functionCandidate.key) ?? origin.name ?? undefined
-    }
-    if (typeof origin !== 'object') return undefined
-    seen.add(origin)
-    const candidate = origin as PluginOrigin
-    const direct = readString(candidate.key)
-    if (direct) return direct
-    if (candidate.key) {
-        const nested = getPluginKeyName(candidate.key, seen)
-        if (nested) return nested
-    }
-    return readString(candidate.name)
-}
-
-function describeYType(type?: Y.AbstractType<unknown> | Y.AbstractType<Y.YEvent<any>>) {
-    if (!type) return 'unknown'
-    const name = type.constructor?.name ?? 'YType'
-    const item = (type as { _item?: { parent?: Y.AbstractType<unknown> } })._item
-    if (item?.parent) {
-        const parent = item.parent
-        if (parent?.constructor?.name) {
-            return `${name}<${parent.constructor.name}>`
-        }
-    }
-    return name
-}
-
-function describeTransactionChanges(transaction: Y.Transaction) {
-    const changed: Array<{ type: string; keysChanged?: string[] }> = []
-    transaction.changed?.forEach((meta, type) => {
-        changed.push({
-            type: describeYType(type),
-            keysChanged: extractChangedKeys(meta),
-        })
-    })
-    const parentTypes: string[] = []
-    transaction.changedParentTypes?.forEach((_, type) => {
-        parentTypes.push(describeYType(type))
-    })
-    return { changed, parentTypes }
-}
-
-function extractChangedKeys(meta: unknown): string[] | undefined {
-    const keys = (meta as { keysChanged?: Set<string | null> } | undefined)?.keysChanged
-    if (!keys || keys.size === 0) {
-        return undefined
-    }
-    const resolved: string[] = []
-    keys.forEach((key) => {
-        if (typeof key === 'string') {
-            resolved.push(key)
-        }
-    })
-    return resolved.length ? resolved : undefined
-}
-
-type DebuggableUndoManager = Y.UndoManager & {
-    undoStack?: unknown[]
-    redoStack?: unknown[]
-}
-
-function getUndoManagerSnapshot(undoManager: Y.UndoManager) {
-    const manager = undoManager as DebuggableUndoManager
-    return {
-        undoDepth: manager.undoStack?.length ?? 'unknown',
-        redoDepth: manager.redoStack?.length ?? 'unknown',
-    }
-}
-
-export function transactDeck<T>(doc: Y.Doc, fn: () => T, debugLabel = 'transactDeck'): T {
-    logDeckHistory(`transact:start:${debugLabel}`)
+export function transactDeck<T>(doc: Y.Doc, fn: () => T, _debugLabel = 'transactDeck'): T {
+    void _debugLabel
     const result = doc.transact(fn, DECK_HISTORY_ORIGIN)
-    logDeckHistory(`transact:end:${debugLabel}`)
     return result
 }
 
@@ -278,27 +169,6 @@ function shouldIncludeShareEntry(key?: string) {
     return !key.startsWith('text-')
 }
 
-function logDocTopology(doc: Y.Doc, provider: LiveblocksYjsProvider) {
-    const describeShare = (target: Y.Doc) => {
-        const entries: { key: string; type: string }[] = []
-        target.share.forEach((type, key) => {
-            entries.push({ key, type: type.constructor?.name ?? 'UnknownType' })
-        })
-        return entries
-    }
-
-    const rootEntries = describeShare(doc)
-    const subdocs = Array.from(provider.subdocHandlers.entries()).map(([guid, handler]) => {
-        const subDoc = getHandlerDoc(handler)
-        return {
-            guid,
-            share: subDoc ? describeShare(subDoc) : [],
-        }
-    })
-
-    console.debug('[DeckHistory] Y.Doc share snapshot', { root: rootEntries, subdocs })
-}
-
 export function useDeckDocument(): DeckDocumentApi {
     const { doc, provider } = useDeckRuntime()
     const deck = useDeckValue(doc)
@@ -321,13 +191,7 @@ export function useDeckActions(): DeckActionHandlers {
 }
 
 export function useDeckHistory() {
-    const { doc, provider } = useDeckRuntime()
     const undoManager = useDeckUndoManager()
-
-    useEffect(() => {
-        if (!import.meta.env?.DEV) return
-        logDocTopology(doc, provider)
-    }, [doc, provider])
 
     const snapshotRef = useRef<HistorySnapshot | null>(null)
 
@@ -346,11 +210,7 @@ export function useDeckHistory() {
                     callback()
                 })
             }
-            const handleStackChange = (event?: unknown) => {
-                logDeckHistory('stack-change', {
-                    event,
-                    ...getUndoManagerSnapshot(undoManager),
-                })
+            const handleStackChange = () => {
                 notify()
             }
             undoManager.on('stack-item-added', handleStackChange)
@@ -380,32 +240,12 @@ export function useDeckHistory() {
     const historyState = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
     const undo = useCallback(() => {
-        logDeckHistory('undo:invoke', getUndoManagerSnapshot(undoManager))
         undoManager.undo()
     }, [undoManager])
 
     const redo = useCallback(() => {
-        logDeckHistory('redo:invoke', getUndoManagerSnapshot(undoManager))
         undoManager.redo()
     }, [undoManager])
-
-    useEffect(() => {
-        if (!isDeckHistoryDebuggingEnabled) return
-        const handleAfterTransaction = (transaction: Y.Transaction) => {
-            const originLabel = formatTransactionOrigin(transaction.origin)
-            const changeSummary = describeTransactionChanges(transaction)
-            logDeckHistory('after-transaction', {
-                origin: originLabel,
-                hasChanged: transaction.changed.size,
-                hasChangedParents: transaction.changedParentTypes.size,
-                ...changeSummary,
-            })
-        }
-        doc.on('afterTransaction', handleAfterTransaction)
-        return () => {
-            doc.off('afterTransaction', handleAfterTransaction)
-        }
-    }, [doc])
 
     return {
         undo,
