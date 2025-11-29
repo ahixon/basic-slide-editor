@@ -50,7 +50,8 @@ export function SlideToolbar({
 }: SlideToolbarProps) {
   const { undo, redo, canUndo, canRedo } = useDeckHistory()
   const [, forceUpdate] = useReducer((count) => count + 1, 0)
-  const editorView = activeTextEditor && !activeTextEditor.view.destroyed ? activeTextEditor.view : null
+  const rawView = activeTextEditor?.view ?? null
+  const editorView = rawView && !isEditorViewDestroyed(rawView) ? rawView : null
 
   const handleZoomChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const { value } = event.target
@@ -300,10 +301,14 @@ function ToolbarButton({
 }
 
 function getUsableView(handleView: EditorView | null): EditorView | null {
-  if (!handleView || handleView.destroyed) {
+  if (!handleView || isEditorViewDestroyed(handleView)) {
     return null
   }
   return handleView
+}
+
+function isEditorViewDestroyed(view: EditorView): boolean {
+  return Boolean((view as EditorView & { destroyed?: boolean }).destroyed)
 }
 
 function resolveMark(view: EditorView | null, markName: 'strong' | 'em') {

@@ -33,7 +33,11 @@ export const DeckNavigationFrame = ({ children }: DeckNavigationFrameProps) => {
           {showDeckControls ? (
             <DeckTitleSection />
           ) : (
-            <Link to="/" className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            <Link
+              // Root route isn't represented in the generated route tree, so assert the type manually.
+              to={"/" as never}
+              className="text-lg font-semibold text-slate-900 dark:text-slate-100"
+            >
               Basic Slide Editor
             </Link>
           )}

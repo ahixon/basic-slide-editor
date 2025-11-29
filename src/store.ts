@@ -64,7 +64,7 @@ function getPluginKeyName(origin: unknown, seen = new Set<unknown>()): string | 
     return readString(candidate.name)
 }
 
-function describeYType(type?: Y.AbstractType<unknown>) {
+function describeYType(type?: Y.AbstractType<unknown> | Y.AbstractType<Y.YEvent<any>>) {
     if (!type) return 'unknown'
     const name = type.constructor?.name ?? 'YType'
     const item = (type as { _item?: { parent?: Y.AbstractType<unknown> } })._item
@@ -82,11 +82,28 @@ function describeTransactionChanges(transaction: Y.Transaction) {
     transaction.changed?.forEach((meta, type) => {
         changed.push({
             type: describeYType(type),
-            keysChanged: meta?.keysChanged ? Array.from(meta.keysChanged) : undefined,
+            keysChanged: extractChangedKeys(meta),
         })
     })
-    const parentTypes = Array.from(transaction.changedParentTypes ? transaction.changedParentTypes.keys() : [], describeYType)
+    const parentTypes: string[] = []
+    transaction.changedParentTypes?.forEach((_, type) => {
+        parentTypes.push(describeYType(type))
+    })
     return { changed, parentTypes }
+}
+
+function extractChangedKeys(meta: unknown): string[] | undefined {
+    const keys = (meta as { keysChanged?: Set<string | null> } | undefined)?.keysChanged
+    if (!keys || keys.size === 0) {
+        return undefined
+    }
+    const resolved: string[] = []
+    keys.forEach((key) => {
+        if (typeof key === 'string') {
+            resolved.push(key)
+        }
+    })
+    return resolved.length ? resolved : undefined
 }
 
 type DebuggableUndoManager = Y.UndoManager & {
@@ -229,26 +246,31 @@ function createDeckCaptureTransaction() {
     }
 }
 
-function collectUndoScope(doc: Y.Doc, provider: LiveblocksYjsProvider): (Y.Doc | Y.AbstractType<unknown>)[] {
-    const scope: (Y.Doc | Y.AbstractType<unknown>)[] = [doc]
+function collectUndoScope(doc: Y.Doc, provider: LiveblocksYjsProvider): Y.AbstractType<unknown>[] {
+    const scope: Y.AbstractType<unknown>[] = []
 
     doc.share.forEach((type, key) => {
         if (shouldIncludeShareEntry(key)) {
-            scope.push(type)
+            scope.push(type as Y.AbstractType<unknown>)
         }
     })
 
     provider.subdocHandlers.forEach((handler) => {
-        const subDoc = handler.doc
-        scope.push(subDoc)
+        const subDoc = getHandlerDoc(handler)
+        if (!subDoc) return
         subDoc.share.forEach((type, key) => {
             if (shouldIncludeShareEntry(key)) {
-                scope.push(type)
+                scope.push(type as Y.AbstractType<unknown>)
             }
         })
     })
 
     return scope
+}
+
+function getHandlerDoc(handler: unknown): Y.Doc | null {
+    const docCandidate = (handler as { doc?: Y.Doc } | undefined)?.doc
+    return docCandidate ?? null
 }
 
 function shouldIncludeShareEntry(key?: string) {
@@ -266,10 +288,13 @@ function logDocTopology(doc: Y.Doc, provider: LiveblocksYjsProvider) {
     }
 
     const rootEntries = describeShare(doc)
-    const subdocs = Array.from(provider.subdocHandlers.entries()).map(([guid, handler]) => ({
-        guid,
-        share: describeShare(handler.doc),
-    }))
+    const subdocs = Array.from(provider.subdocHandlers.entries()).map(([guid, handler]) => {
+        const subDoc = getHandlerDoc(handler)
+        return {
+            guid,
+            share: subDoc ? describeShare(subDoc) : [],
+        }
+    })
 
     console.debug('[DeckHistory] Y.Doc share snapshot', { root: rootEntries, subdocs })
 }
