@@ -24,6 +24,7 @@ type SlideToolbarProps = {
   activeTextEditor?: Editor | null
   onDeleteSelectedObject?: () => void
   canDeleteObject?: boolean
+  canAddObjects?: boolean
 }
 
 const TOOLBAR_BUTTON_CLASS =
@@ -37,6 +38,7 @@ export function SlideToolbar({
   activeTextEditor = null,
   onDeleteSelectedObject,
   canDeleteObject = false,
+  canAddObjects = true,
 }: SlideToolbarProps) {
   const { undo, redo, canUndo, canRedo } = useDeckHistory()
   const [, forceUpdate] = useReducer((count) => count + 1, 0)
@@ -166,10 +168,10 @@ export function SlideToolbar({
           </>
         )}
         <span className="h-6 w-px bg-neutral-200 dark:bg-slate-700" aria-hidden="true" />
-        <ToolbarButton onClick={onAddTextbox} aria-label="Add textbox">
+        <ToolbarButton onClick={onAddTextbox} aria-label="Add textbox" disabled={!canAddObjects}>
           <Type size={16} />
         </ToolbarButton>
-        <ToolbarButton onClick={onAddImage} aria-label="Add image">
+        <ToolbarButton onClick={onAddImage} aria-label="Add image" disabled={!canAddObjects}>
           <Image size={16} />
         </ToolbarButton>
         <ToolbarButton

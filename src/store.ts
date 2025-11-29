@@ -129,14 +129,34 @@ export function useDeckUndoManager(): Y.UndoManager {
 
 function getOrCreateUndoManager(doc: Y.Doc, provider: LiveblocksYjsProvider): Y.UndoManager {
     const scope = collectUndoScope(doc, provider)
+    const captureTransaction = createDeckCaptureTransaction()
     let undoManager = undoManagerCache.get(doc)
     if (!undoManager) {
-        undoManager = new Y.UndoManager(scope, { doc, trackedOrigins: new Set([DECK_HISTORY_ORIGIN]) })
+        undoManager = new Y.UndoManager(scope, {
+            doc,
+            trackedOrigins: new Set([DECK_HISTORY_ORIGIN]),
+            captureTransaction,
+        })
         undoManagerCache.set(doc, undoManager)
         return undoManager
     }
     undoManager.addToScope(scope)
+    ;(undoManager as { captureTransaction?: (transaction: Y.Transaction) => boolean }).captureTransaction = captureTransaction
     return undoManager
+}
+
+function createDeckCaptureTransaction() {
+    return (transaction: Y.Transaction) => {
+        const changedCount = transaction.changed?.size ?? 0
+        const parentCount = transaction.changedParentTypes?.size ?? 0
+        const hasMeaningfulChange = changedCount > 0 || parentCount > 0
+
+        if (!hasMeaningfulChange) {
+            return false
+        }
+
+        return true
+    }
 }
 
 function collectUndoScope(doc: Y.Doc, provider: LiveblocksYjsProvider): (Y.Doc | Y.AbstractType<unknown>)[] {

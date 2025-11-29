@@ -2,10 +2,15 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { redo, undo, ySyncPlugin, ySyncPluginKey, yUndoPlugin, yUndoPluginKey, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap'
-import type { Doc, UndoManager, XmlFragment } from 'yjs'
+import type { Transaction, UndoManager, XmlFragment } from 'yjs'
+import { Doc, UndoManager as YUndoManager } from 'yjs'
 
 type YSyncOpts = Parameters<typeof ySyncPlugin>[1]
 type YUndoOpts = Parameters<typeof yUndoPlugin>[0]
+
+type StackItemEvent = {
+  stackItem: { meta: Map<unknown, unknown> }
+}
 
 export interface CollaborationStorage {
   isDisabled: boolean
@@ -106,39 +111,78 @@ export const SharedCollaboration = Extension.create<SharedCollaborationOptions, 
       ? this.options.fragment
       : (this.options.document as Doc).getXmlFragment(this.options.field)
 
-    const yUndoPluginInstance = yUndoPlugin(this.options.yUndoOptions)
+    const userCaptureTransaction = this.options.yUndoOptions?.captureTransaction
+    let editorUndoManagerRef: UndoManager | null = null
+    const captureTransaction = (transaction: Transaction) => {
+      const changedParents = transaction.changedParentTypes?.size ?? 0
+      const origin = transaction.origin as PluginKey | undefined
+      const isYSyncOrigin =
+        origin === ySyncPluginKey ||
+        (!!origin && origin instanceof PluginKey && origin.key === ySyncPluginKey.key)
+
+      if (isYSyncOrigin && changedParents === 0) {
+        return false
+      }
+
+      if (origin instanceof YUndoManager && origin !== editorUndoManagerRef) {
+        return false
+      }
+
+      return typeof userCaptureTransaction === 'function'
+        ? userCaptureTransaction(transaction)
+        : true
+    }
+
+    const yUndoPluginInstance = yUndoPlugin({
+      ...this.options.yUndoOptions,
+      captureTransaction,
+    })
 
     yUndoPluginInstance.spec.view = (view: EditorView) => {
       const yState = ySyncPluginKey.getState(view.state)
       const undoState = yUndoPluginKey.getState(view.state)
       const undoManager = undoState.undoManager
-      if (undoManager && ySyncPluginKey && typeof undoManager.trackedOrigins?.add === 'function') {
+
+      if (!undoManager) {
+        return {
+          destroy: () => undefined,
+        }
+      }
+
+      editorUndoManagerRef = undoManager
+
+      if (undoManager && typeof undoManager.trackedOrigins?.add === 'function') {
         undoManager.trackedOrigins.add(ySyncPluginKey)
       }
 
-      type UndoStackEvent = { stackItem: { meta: Map<unknown, unknown> } }
-      const handleStackItemAdded = ({ stackItem }: UndoStackEvent) => {
+      const handleStackItemAdded = (event: StackItemEvent) => {
         const binding = yState.binding
         if (binding) {
-          stackItem.meta.set(binding, undoState.prevSel)
+          event.stackItem.meta.set(binding, undoState.prevSel)
         }
       }
 
-      const handleStackItemPopped = ({ stackItem }: UndoStackEvent) => {
+      const handleStackItemPopped = (event: StackItemEvent) => {
         const binding = yState.binding
         if (binding) {
           binding.beforeTransactionSelection =
-            stackItem.meta.get(binding) || binding.beforeTransactionSelection
+            event.stackItem.meta.get(binding) || binding.beforeTransactionSelection
         }
+      }
+
+      const handleStackCleared = (event: { undoStackCleared: boolean; redoStackCleared: boolean }) => {
+        if (!event.undoStackCleared && !event.redoStackCleared) return
       }
 
       undoManager.on('stack-item-added', handleStackItemAdded)
       undoManager.on('stack-item-popped', handleStackItemPopped)
+      undoManager.on('stack-cleared', handleStackCleared)
 
       return {
         destroy: () => {
           undoManager.off('stack-item-added', handleStackItemAdded)
           undoManager.off('stack-item-popped', handleStackItemPopped)
+          undoManager.off('stack-cleared', handleStackCleared)
         },
       }
     }
