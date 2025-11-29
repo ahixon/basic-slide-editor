@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { DeckObject, Slide } from '../store'
-import { useDeckStore } from '../store'
+import { useDeckDocument } from '../store'
 import { SlideSidebar } from './SlideSidebar'
 import { SlideToolbar } from './SlideToolbar'
 import { SlideViewport } from './SlideViewport'
@@ -28,19 +28,14 @@ export function SlideEditorView({
   navigateToSlide,
   navigateToDeckRoot,
 }: SlideEditorViewProps) {
-  const slidesById = useDeckStore((state) => state.deck?.slides ?? {})
-  const slideOrder = useDeckStore((state) => state.deck?.slideOrder ?? [])
+  const { deck, addSlide, deleteSlide, appendObjectToSlide, isSynced } = useDeckDocument()
+  const { slides: slidesById, slideOrder } = deck
   const orderedSlides = useMemo(
     () => slideOrder.map((id) => slidesById[id]).filter((slide): slide is Slide => Boolean(slide)),
     [slideOrder, slidesById],
   )
   const totalSlides = slideOrder.length
-  const addSlide = useDeckStore((state) => state.addSlide)
-  const deleteSlide = useDeckStore((state) => state.deleteSlide)
-  const appendObjectToSlide = useDeckStore((state) => state.appendObjectToSlide)
-  const {
-    liveblocks: { isStorageLoading },
-  } = useDeckStore()
+  const isStorageLoading = !isSynced
   const [zoomOverride, setZoomOverride] = useState<number | null>(null)
 
   const activeSlideId = useMemo(() => {

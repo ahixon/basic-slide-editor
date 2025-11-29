@@ -1,8 +1,8 @@
 import { Image, Redo2, Type, Undo2, ZoomIn } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import type { ChangeEvent } from 'react'
 
-import { useDeckStore } from '../store'
+import { useDeckHistory } from '../store'
 
 const ZOOM_OPTIONS = [
   { label: 'Fit', value: 'auto' },
@@ -28,14 +28,7 @@ export function SlideToolbar({
   zoomOverride,
   onZoomOverrideChange,
 }: SlideToolbarProps) {
-  const room = useDeckStore((state) => state.liveblocks.room)
-  const history = room?.history
-  const undo = history?.undo
-  const redo = history?.redo
-  const [historyState, setHistoryState] = useState<HistoryState>(() => ({
-    canUndo: history?.canUndo?.() ?? false,
-    canRedo: history?.canRedo?.() ?? false,
-  }))
+  const { undo, redo, canUndo, canRedo } = useDeckHistory()
 
   const handleZoomChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const { value } = event.target
@@ -51,33 +44,6 @@ export function SlideToolbar({
     'inline-flex items-center gap-2 rounded-sm border border-neutral-300 px-1 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
 
   useEffect(() => {
-    const historyApi = room?.history
-    if (!historyApi) {
-      // Safe to reset here because toolbar mirrors room.history state exclusively.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setHistoryState(DEFAULT_HISTORY_STATE)
-      return
-    }
-
-    setHistoryState({
-      canUndo: historyApi.canUndo?.() ?? false,
-      canRedo: historyApi.canRedo?.() ?? false,
-    })
-
-    const unsubscribe = room.subscribe('history', ({ canUndo, canRedo }) => {
-      setHistoryState((previous) =>
-        previous.canUndo === canUndo && previous.canRedo === canRedo
-          ? previous
-          : { canUndo, canRedo },
-      )
-    })
-
-    return () => unsubscribe?.()
-  }, [room])
-
-  useEffect(() => {
-    if (!undo && !redo) return
-
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase()
       const hasModifier = event.metaKey || event.ctrlKey
@@ -120,18 +86,18 @@ export function SlideToolbar({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => undo?.()}
+            onClick={() => undo()}
             className={toolbarButtonClass}
-            disabled={!historyState.canUndo}
+            disabled={!canUndo}
             aria-label="Undo"
           >
             <Undo2 size={16} />
           </button>
           <button
             type="button"
-            onClick={() => redo?.()}
+            onClick={() => redo()}
             className={toolbarButtonClass}
-            disabled={!historyState.canRedo}
+            disabled={!canRedo}
             aria-label="Redo"
           >
             <Redo2 size={16} />
@@ -174,12 +140,5 @@ export function SlideToolbar({
     </div>
   )
 }
-
-type HistoryState = {
-  canUndo: boolean
-  canRedo: boolean
-}
-
-const DEFAULT_HISTORY_STATE: HistoryState = { canUndo: false, canRedo: false }
 
 export type { SlideToolbarProps }

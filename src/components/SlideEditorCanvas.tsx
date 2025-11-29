@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 
 import type { DeckObject, Slide } from '../store'
-import { useDeckStore } from '../store'
+import { useDeckActions } from '../store'
+import { useRoom } from '@liveblocks/react'
 import { SlideObjectElement } from './SlideObjectElement'
 import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from './slideDimensions'
 
@@ -37,8 +38,8 @@ export function SlideEditorCanvas({
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [dragState, setDragState] = useState<DragState | null>(null)
   const [focusedObjectId, setFocusedObjectId] = useState<string | null>(null)
-  const updateObjectPosition = useDeckStore((state) => state.updateObjectPosition)
-  const room = useDeckStore((state) => state.liveblocks.room)
+  const { updateObjectPosition } = useDeckActions()
+  const room = useRoom()
   const historyPausedRef = useRef(false)
 
   const scaledWidth = SLIDE_BASE_WIDTH * scale

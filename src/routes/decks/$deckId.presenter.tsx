@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SlideCanvas } from '../../components/SlideCanvas'
 import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from '../../components/slideDimensions'
 import type { Slide } from '../../store'
-import { useDeckStore } from '../../store'
+import { useDeckState } from '../../store'
 import { Expand } from 'lucide-react'
 import { LiveblocksProvider, RoomProvider } from '@liveblocks/react'
 
@@ -23,18 +23,24 @@ export const Route = createFileRoute('/decks/$deckId/presenter')({
 
 function PresenterConsole() {
   const { deckId } = Route.useLoaderData() as PresenterLoaderData
-  const deck = useDeckStore((state) => state.deck)
-  const isStorageLoading = useDeckStore((state) => state.liveblocks.isStorageLoading)
+
+  return (
+    <LiveblocksProvider publicApiKey={import.meta.env.VITE_LIVEBLOCKS_KEY}>
+      <RoomProvider id={`deck-${deckId}`}>
+        <PresenterRoom deckId={deckId} />
+      </RoomProvider>
+    </LiveblocksProvider>
+  )
+}
+
+function PresenterRoom({ deckId }: { deckId: string }) {
+  const { deck, isSynced } = useDeckState()
   const slidesById = deck?.slides ?? {}
   const slideOrder = deck?.slideOrder ?? []
   const slides = slideOrder.map((id) => slidesById[id]).filter((slide): slide is Slide => Boolean(slide))
   const resetKey = `${deckId}:${slideOrder.join(',')}`
 
-  return <LiveblocksProvider publicApiKey={import.meta.env.VITE_LIVEBLOCKS_KEY}>
-    <RoomProvider id={`deck-${deckId}`}>
-      <PresenterStage key={resetKey} slides={slides} isLoading={isStorageLoading} />
-    </RoomProvider>
-  </LiveblocksProvider>
+  return <PresenterStage key={resetKey} slides={slides} isLoading={!isSynced} />
 }
 
 type PresenterStageProps = {

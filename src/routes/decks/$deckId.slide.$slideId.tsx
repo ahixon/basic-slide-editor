@@ -1,9 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useCallback, useEffect } from 'react'
+import { useCallback } from 'react'
 
 import { SlideEditorView } from '../../components/SlideEditorView'
-import { LiveblocksProvider, RoomProvider } from '@liveblocks/react'
-import { useDeckStore } from '../../store'
 
 export const Route = createFileRoute('/decks/$deckId/slide/$slideId')({
   component: SlideEditor,
@@ -34,27 +32,12 @@ function SlideEditor() {
     [deckId, navigate],
   )
 
-  const {
-    liveblocks: { enterRoom, leaveRoom },
-  } = useDeckStore();
-
-  useEffect(() => {
-    enterRoom(`deck-${deckId}`);
-    return () => {
-      leaveRoom();
-    };
-  }, [deckId, enterRoom, leaveRoom]);
-
   return (
-    <LiveblocksProvider publicApiKey={import.meta.env.VITE_LIVEBLOCKS_KEY}>
-      <RoomProvider id={`deck-${deckId}`}>
-        <SlideEditorView
-          slideId={slideId}
-          navigateToSlide={navigateToSlide}
-          navigateToDeckRoot={navigateToDeckRoot}
-        />
-      </RoomProvider>
-    </LiveblocksProvider>
+    <SlideEditorView
+      slideId={slideId}
+      navigateToSlide={navigateToSlide}
+      navigateToDeckRoot={navigateToDeckRoot}
+    />
   )
 }
 

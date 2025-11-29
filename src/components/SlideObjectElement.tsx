@@ -1,19 +1,15 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, HTMLAttributes, PointerEvent as ReactPointerEvent } from 'react'
 
 import type { DeckObject, ImageObject, TextObject } from '../store'
-import { MIN_TEXT_WIDTH, useDeckStore } from '../store'
+import { MIN_TEXT_WIDTH, useDeckActions, useDeckRuntime, useDeckUndoManager } from '../store'
+import { useRoom } from '@liveblocks/react'
 
-import {
-  useLiveblocksExtension,
-  FloatingToolbar,
-} from "@liveblocks/react-tiptap";
-import { useEditor, EditorContent } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-
-import "@liveblocks/react-ui/styles.css";
-import "@liveblocks/react-tiptap/styles.css";
-import { ArrowDownRight, GripVertical, Scaling } from 'lucide-react';
+import { useEditor, EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import { SharedCollaboration } from '../extensions/SharedCollaboration'
+import * as Y from 'yjs'
+import { GripVertical, Scaling } from 'lucide-react'
 const MIN_TEXT_SCALE = 0.25
 const MAX_TEXT_SCALE = 5
 
@@ -115,10 +111,30 @@ function SlideTextElement({
     startClientX: number
     startWidth: number
   } | null>(null)
-  const updateTextObjectScale = useDeckStore((state) => state.updateTextObjectScale)
-  const updateTextObjectWidth = useDeckStore((state) => state.updateTextObjectWidth)
-  const room = useDeckStore((state) => state.liveblocks.room)
+  const { updateTextObjectScale, updateTextObjectWidth } = useDeckActions()
+  const room = useRoom()
+  const { doc } = useDeckRuntime()
+  const undoManager = useDeckUndoManager()
   const historyPausedRef = useRef(false)
+  const fragmentKey = useMemo(() => `text-${object.id}`, [object.id])
+  const textFragment = useMemo(() => doc.getXmlFragment(fragmentKey), [doc, fragmentKey])
+
+  useEffect(() => {
+    undoManager.addToScope([textFragment])
+  }, [textFragment, undoManager])
+
+  useEffect(() => {
+    if (textFragment.length > 0) return
+    doc.transact(() => {
+      const paragraph = new Y.XmlElement('paragraph')
+      const textNode = new Y.XmlText()
+      if (object.text) {
+        textNode.insert(0, object.text)
+      }
+      paragraph.insert(0, [textNode])
+      textFragment.insert(0, [paragraph])
+    })
+  }, [doc, object.text, textFragment])
 
   const resolvedScale = Number.isFinite(scale) && scale && scale > 0 ? scale : 1
   const textScale = (() => {
@@ -153,14 +169,19 @@ function SlideTextElement({
   }
   contentStyle.transformOrigin = transformOrigin ?? 'top left'
 
-  const liveblocks = useLiveblocksExtension({ field: object.id, comments: false });
-
-  const editor = useEditor({
-    extensions: [
-      liveblocks,
-      StarterKit.configure({undoRedo: false}),
-    ],
-  });
+  const editor = useEditor(
+    {
+      extensions: [
+        StarterKit.configure({ history: false }),
+        SharedCollaboration.configure({
+          document: doc,
+          field: fragmentKey,
+          yUndoOptions: { undoManager },
+        }),
+      ],
+    },
+    [doc, fragmentKey, undoManager],
+  )
 
   const pauseHistory = useCallback(() => {
     if (historyPausedRef.current) return
@@ -360,7 +381,7 @@ function SlideTextElement({
     const observer = new ResizeObserver(() => measure())
     observer.observe(node)
     return () => observer.disconnect()
-  }, [object.text, object.width, object.scale, textScale])
+  }, [object.id, object.width, object.scale, textScale])
 
   const inactiveHandleClass = 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
   const scaleHandleClassName = enableTextScaling
@@ -424,7 +445,6 @@ function SlideTextElement({
     >
       <div ref={containerRef} className="relative" style={contentStyle}>
         <EditorContent editor={editor} data-slide-text-editor="true" />
-        <FloatingToolbar editor={editor} />
       </div>
       {enableTextScaling && (
         <div className="absolute left-0 top-0" style={overlaySizeStyle}>

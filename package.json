@@ -13,16 +13,17 @@
     "@liveblocks/client": "^3.11.0",
     "@liveblocks/react": "^3.11.0",
     "@liveblocks/react-tiptap": "^3.11.0",
-    "@liveblocks/zustand": "^3.11.0",
+    "@liveblocks/yjs": "^3.11.0",
     "@tailwindcss/vite": "^4.1.17",
     "@tanstack/react-router": "^1.139.6",
+    "@tiptap/extension-collaboration": "^3.11.1",
     "@tiptap/react": "^3.11.1",
     "@tiptap/starter-kit": "^3.11.1",
     "lucide-react": "^0.555.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.1.17",
-    "zustand": "^5.0.8"
+    "yjs": "^13.6.27"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
