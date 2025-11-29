@@ -1,26 +1,18 @@
 import { Outlet, createFileRoute, useRouterState } from '@tanstack/react-router'
-import { useEffect, useMemo } from 'react'
+import { useCallback, useEffect } from 'react'
+import { LiveblocksProvider, RoomProvider } from '@liveblocks/react'
 
-import type { Deck } from '../../features/decks/editorState'
-import { getDeck } from '../../features/decks/editorState'
+import { useDeckStore } from '../../store'
+import { SlideEditorView } from '../../components/SlideEditorView'
 
 export type DeckLoaderData = {
   deckId: string
-  deck: Deck
 }
 
 export const Route = createFileRoute('/decks/$deckId')({
   loader: ({ params }): DeckLoaderData => {
-    const deck =
-      getDeck(params.deckId) ?? {
-        id: params.deckId,
-        title: 'Untitled Deck',
-        slides: [],
-      }
-
     return {
       deckId: params.deckId,
-      deck,
     }
   },
   component: DeckRouteShell,
@@ -28,23 +20,68 @@ export const Route = createFileRoute('/decks/$deckId')({
 
 function DeckRouteShell() {
   const { deckId } = Route.useParams()
-  const { deck } = Route.useLoaderData() as DeckLoaderData
+  const deck = useDeckStore((state) => state.deck)
   const navigate = Route.useNavigate()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const slides = useMemo(() => deck.slides ?? [], [deck])
+  const firstSlideId = deck?.slideOrder?.[0] ?? null
+  const deckRoot = `/decks/${deckId}`
+  const atDeckRoot = pathname === deckRoot || pathname === `${deckRoot}/`
 
   useEffect(() => {
-    if (!slides.length) return
-    const deckRoot = `/decks/${deckId}`
-    const atDeckRoot = pathname === deckRoot || pathname === `${deckRoot}/`
-    if (atDeckRoot) {
+    if (!atDeckRoot) return
+    if (!firstSlideId) return
+    navigate({
+      to: '/decks/$deckId/slide/$slideId',
+      params: { deckId, slideId: firstSlideId },
+      replace: true,
+    })
+  }, [atDeckRoot, deckId, firstSlideId, navigate])
+
+  const navigateToSlide = useCallback(
+    (nextSlideId: string, options?: { replace?: boolean }) => {
       navigate({
         to: '/decks/$deckId/slide/$slideId',
-        params: { deckId, slideId: slides[0].id },
-        replace: true,
+        params: { deckId, slideId: nextSlideId },
+        replace: options?.replace ?? false,
       })
-    }
-  }, [deckId, slides, pathname, navigate])
+    },
+    [deckId, navigate],
+  )
+
+  const navigateToDeckRoot = useCallback(
+    (options?: { replace?: boolean }) => {
+      navigate({
+        to: '/decks/$deckId',
+        params: { deckId },
+        replace: options?.replace ?? false,
+      })
+    },
+    [deckId, navigate],
+  )
+
+  const {
+    liveblocks: { enterRoom, leaveRoom },
+  } = useDeckStore();
+
+  useEffect(() => {
+    enterRoom(`deck-${deckId}`);
+    return () => {
+      leaveRoom();
+    };
+  }, [deckId, enterRoom, leaveRoom]);
+
+  if (atDeckRoot) {
+    return (
+      <LiveblocksProvider publicApiKey={import.meta.env.VITE_LIVEBLOCKS_KEY}>
+        <RoomProvider id={`deck-${deckId}`}>
+          <SlideEditorView
+            navigateToSlide={navigateToSlide}
+            navigateToDeckRoot={navigateToDeckRoot}
+          />
+        </RoomProvider >
+      </LiveblocksProvider>
+    )
+  }
 
   return <Outlet />
 }

@@ -1,39 +1,41 @@
 import { Link, useRouterState } from '@tanstack/react-router'
-import { type ReactNode, useCallback, useState } from 'react'
+import { type ReactNode, useCallback } from 'react'
 
-import type { Deck } from '../features/decks/editorState'
+import { useDeckStore } from '../store'
 import { DeckTitleInput } from './DeckTitleInput'
 import { Presentation } from 'lucide-react'
-
-type DeckMatchLoaderData = {
-  deckId: string
-  deck: Deck
-}
 
 type DeckNavigationFrameProps = {
   children: ReactNode
 }
 
-export const DeckNavigationFrame = ({ children }: DeckNavigationFrameProps) => {
-  const [deckTitles, setDeckTitles] = useState<Record<string, string>>({})
+const avatarColors = ['bg-sky-500', 'bg-rose-500', 'bg-amber-500', 'bg-emerald-500', 'bg-indigo-500']
 
+const getAvatarColor = (connectionId: number) =>
+  avatarColors[Math.abs(connectionId) % avatarColors.length]
+
+const getAvatarInitial = (connectionId: number) =>
+  String.fromCharCode(65 + (Math.abs(connectionId) % 26))
+
+export const DeckNavigationFrame = ({ children }: DeckNavigationFrameProps) => {
   const deckMatch = useRouterState({
     select: (state) => state.matches.find((match) => match.routeId === '/decks/$deckId') ?? null,
   })
 
   const activeDeckId = deckMatch?.params?.deckId as string | undefined
-  const loaderData = deckMatch?.loaderData as DeckMatchLoaderData | undefined
-  const loaderTitle = loaderData?.deck?.title ?? ''
-
-  const fallbackTitle = activeDeckId ? `Deck ${activeDeckId}` : ''
-  const deckTitle = activeDeckId ? deckTitles[activeDeckId] ?? loaderTitle ?? fallbackTitle : ''
+  const {
+    deck,
+    setDeckTitle,
+    liveblocks: { isStorageLoading },
+  } = useDeckStore()
+  const others = useDeckStore((state) => state.liveblocks.others)
+  const deckTitle = deck.title
 
   const handleDeckTitleChange = useCallback(
     (nextTitle: string) => {
-      if (!activeDeckId) return
-      setDeckTitles((prev) => ({ ...prev, [activeDeckId]: nextTitle }))
+      setDeckTitle(nextTitle)
     },
-    [activeDeckId],
+    [setDeckTitle],
   )
 
   return (
@@ -41,7 +43,11 @@ export const DeckNavigationFrame = ({ children }: DeckNavigationFrameProps) => {
       <nav className="flex shrink-0 items-center gap-3 border-b border-neutral-200 bg-white/80 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
         <div className="flex flex-1 items-center">
           {activeDeckId ? (
-            <DeckTitleInput value={deckTitle} onChange={handleDeckTitleChange} />
+            isStorageLoading ? (
+              <DeckTitleInputFallback />
+            ) : (
+              <DeckTitleInput value={deckTitle} onChange={handleDeckTitleChange} />
+            )
           ) : (
             <Link to="/" className="text-lg font-semibold text-slate-900 dark:text-slate-100">
               Basic Slide Editor
@@ -49,6 +55,22 @@ export const DeckNavigationFrame = ({ children }: DeckNavigationFrameProps) => {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {others.length > 0 && (
+            <div className="flex items-center gap-1 pr-1">
+              {others.map((other) => (
+                <div
+                  key={other.connectionId}
+                  className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-white shadow-sm ${getAvatarColor(
+                    other.connectionId,
+                  )}`}
+                  title={`User ${other.connectionId}`}
+                  aria-label={`Connected user ${other.connectionId}`}
+                >
+                  {getAvatarInitial(other.connectionId)}
+                </div>
+              ))}
+            </div>
+          )}
           {activeDeckId && (
             <Link
               to="/decks/$deckId/presenter"
@@ -64,3 +86,7 @@ export const DeckNavigationFrame = ({ children }: DeckNavigationFrameProps) => {
     </div>
   )
 }
+
+const DeckTitleInputFallback = () => (
+  <div className="h-11 w-full animate-pulse rounded-lg bg-neutral-200/80 dark:bg-slate-800/80" />
+)

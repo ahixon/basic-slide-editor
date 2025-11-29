@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { Slide } from '../features/decks/editorState'
+import type { Slide } from '../store'
 import { SlideCanvas } from './SlideCanvas'
 import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from './slideDimensions'
 import { Minus, Plus } from 'lucide-react'
@@ -12,7 +12,7 @@ const parsePixels = (value: string) => {
 
 type SlideSidebarProps = {
   slides: Slide[]
-  activeId: string
+  activeSlideId: string | null
   onSelect: (slideId: string) => void
   onAddSlide: () => void
   onDeleteSlide: () => void
@@ -21,7 +21,7 @@ type SlideSidebarProps = {
 
 export function SlideSidebar({
   slides,
-  activeId,
+  activeSlideId,
   onSelect,
   onAddSlide,
   onDeleteSlide,
@@ -68,10 +68,11 @@ export function SlideSidebar({
   }, [])
 
   useEffect(() => {
-    const activeButton = buttonRefs.current.get(activeId)
+    if (!activeSlideId) return
+    const activeButton = buttonRefs.current.get(activeSlideId)
     if (!activeButton) return
     activeButton.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [activeId])
+  }, [activeSlideId])
 
   return (
     <aside className="flex h-full flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white dark:border-slate-800 dark:bg-slate-900">
@@ -98,7 +99,7 @@ export function SlideSidebar({
       </div>
       <div ref={listRef} className="flex-1 space-y-2 overflow-y-auto px-3 py-2 bg-neutral-50 dark:bg-slate-900">
         {slides.map((slide) => {
-          const isActive = slide.id === activeId
+          const isActive = slide.id === activeSlideId
           const previewDimensions =
             previewScale > 0
               ? {

@@ -3,45 +3,46 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { SlideCanvas } from '../../components/SlideCanvas'
 import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from '../../components/slideDimensions'
-import type { Deck, Slide } from '../../features/decks/editorState'
-import { getDeck } from '../../features/decks/editorState'
+import type { Slide } from '../../store'
+import { useDeckStore } from '../../store'
 import { Expand } from 'lucide-react'
+import { LiveblocksProvider, RoomProvider } from '@liveblocks/react'
 
 type PresenterLoaderData = {
   deckId: string
-  deck: Deck
 }
 
 export const Route = createFileRoute('/decks/$deckId/presenter')({
   loader: ({ params }): PresenterLoaderData => {
-    const deck =
-      getDeck(params.deckId) ?? {
-        id: params.deckId,
-        title: 'Untitled Deck',
-        slides: [],
-      }
-
     return {
       deckId: params.deckId,
-      deck,
     }
   },
   component: PresenterConsole,
 })
 
 function PresenterConsole() {
-  const { deck, deckId } = Route.useLoaderData() as PresenterLoaderData
-  const slides = deck.slides ?? []
-  const resetKey = `${deckId}:${slides.map((slide) => slide.id).join('|')}`
+  const { deckId } = Route.useLoaderData() as PresenterLoaderData
+  const deck = useDeckStore((state) => state.deck)
+  const isStorageLoading = useDeckStore((state) => state.liveblocks.isStorageLoading)
+  const slidesById = deck?.slides ?? {}
+  const slideOrder = deck?.slideOrder ?? []
+  const slides = slideOrder.map((id) => slidesById[id]).filter((slide): slide is Slide => Boolean(slide))
+  const resetKey = `${deckId}:${slideOrder.join(',')}`
 
-  return <PresenterStage key={resetKey} slides={slides} />
+  return <LiveblocksProvider publicApiKey={import.meta.env.VITE_LIVEBLOCKS_KEY}>
+    <RoomProvider id={`deck-${deckId}`}>
+      <PresenterStage key={resetKey} slides={slides} isLoading={isStorageLoading} />
+    </RoomProvider>
+  </LiveblocksProvider>
 }
 
 type PresenterStageProps = {
   slides: Slide[]
+  isLoading?: boolean
 }
 
-function PresenterStage({ slides }: PresenterStageProps) {
+function PresenterStage({ slides, isLoading = false }: PresenterStageProps) {
   const [activeIndex, setActiveIndex] = useState(0)
   const stageRef = useRef<HTMLDivElement | null>(null)
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 })
@@ -70,14 +71,14 @@ function PresenterStage({ slides }: PresenterStageProps) {
   }, [])
 
   const handleAdvance = useCallback(() => {
-    if (!slides.length) return
+    if (isLoading || !slides.length) return
     setActiveIndex((prev) => Math.min(prev + 1, slides.length - 1))
-  }, [slides.length])
+  }, [slides.length, isLoading])
 
   const handleRetreat = useCallback(() => {
-    if (!slides.length) return
+    if (isLoading || !slides.length) return
     setActiveIndex((prev) => Math.max(prev - 1, 0))
-  }, [slides.length])
+  }, [slides.length, isLoading])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -100,9 +101,11 @@ function PresenterStage({ slides }: PresenterStageProps) {
       }
     }
 
+    if (isLoading) return
+
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleAdvance, handleRetreat, slides.length])
+  }, [handleAdvance, handleRetreat, slides.length, isLoading])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -146,7 +149,15 @@ function PresenterStage({ slides }: PresenterStageProps) {
         </div>
       )}
       <div ref={stageRef} className="flex min-h-screen w-full items-center justify-center">
-        {activeSlide ? (
+        {isLoading ? (
+          <div
+            className="border border-neutral-200 bg-neutral-200/80 shadow-sm animate-pulse dark:border-slate-800 dark:bg-slate-800/60"
+            style={{
+              width: SLIDE_BASE_WIDTH * slideScale,
+              height: SLIDE_BASE_HEIGHT * slideScale,
+            }}
+          />
+        ) : activeSlide ? (
           <SlideCanvas slide={activeSlide} scale={slideScale} rounded={false} />
         ) : (
           <div className="text-center text-slate-400">

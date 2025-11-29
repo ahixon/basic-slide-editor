@@ -1,5 +1,8 @@
-import { Image, Type, ZoomIn } from 'lucide-react'
+import { Image, Redo2, Type, Undo2, ZoomIn } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type { ChangeEvent } from 'react'
+
+import { useDeckStore } from '../store'
 
 const ZOOM_OPTIONS = [
   { label: 'Fit', value: 'auto' },
@@ -25,6 +28,15 @@ export function SlideToolbar({
   zoomOverride,
   onZoomOverrideChange,
 }: SlideToolbarProps) {
+  const room = useDeckStore((state) => state.liveblocks.room)
+  const history = room?.history
+  const undo = history?.undo
+  const redo = history?.redo
+  const [historyState, setHistoryState] = useState<HistoryState>(() => ({
+    canUndo: history?.canUndo?.() ?? false,
+    canRedo: history?.canRedo?.() ?? false,
+  }))
+
   const handleZoomChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const { value } = event.target
     if (value === 'auto') {
@@ -35,20 +47,110 @@ export function SlideToolbar({
     onZoomOverrideChange(Number.isFinite(numericValue) ? numericValue : null)
   }
 
+  const toolbarButtonClass =
+    'inline-flex items-center gap-2 rounded-sm border border-neutral-300 px-1 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+
+  useEffect(() => {
+    const historyApi = room?.history
+    if (!historyApi) {
+      // Safe to reset here because toolbar mirrors room.history state exclusively.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setHistoryState(DEFAULT_HISTORY_STATE)
+      return
+    }
+
+    setHistoryState({
+      canUndo: historyApi.canUndo?.() ?? false,
+      canRedo: historyApi.canRedo?.() ?? false,
+    })
+
+    const unsubscribe = room.subscribe('history', ({ canUndo, canRedo }) => {
+      setHistoryState((previous) =>
+        previous.canUndo === canUndo && previous.canRedo === canRedo
+          ? previous
+          : { canUndo, canRedo },
+      )
+    })
+
+    return () => unsubscribe?.()
+  }, [room])
+
+  useEffect(() => {
+    if (!undo && !redo) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase()
+      const hasModifier = event.metaKey || event.ctrlKey
+      if (!hasModifier) return
+
+      const target = event.target as HTMLElement | null
+      if (target) {
+        const tagName = target.tagName
+        const isEditable =
+          tagName === 'INPUT' ||
+          tagName === 'TEXTAREA' ||
+          target.isContentEditable
+        if (isEditable) return
+      }
+
+      const wantsUndo = key === 'z' && !event.shiftKey
+      const wantsRedo = key === 'y' || (key === 'z' && event.shiftKey)
+
+      if (wantsUndo && undo) {
+        event.preventDefault()
+        undo()
+        return
+      }
+
+      if (wantsRedo && redo) {
+        event.preventDefault()
+        redo()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [undo, redo])
+
   return (
     <div className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => undo?.()}
+            className={toolbarButtonClass}
+            disabled={!historyState.canUndo}
+            aria-label="Undo"
+          >
+            <Undo2 size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => redo?.()}
+            className={toolbarButtonClass}
+            disabled={!historyState.canRedo}
+            aria-label="Redo"
+          >
+            <Redo2 size={16} />
+          </button>
+        </div>
+        <span className="h-6 w-px bg-neutral-200 dark:bg-slate-700" aria-hidden="true" />
         <button
           type="button"
           onClick={onAddTextbox}
-          className="inline-flex items-center gap-2 rounded-sm border border-neutral-300 px-1 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 transition hover:bg-neutral-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          className={toolbarButtonClass}
+          aria-label="Add textbox"
         >
           <Type size={16} />
         </button>
         <button
           type="button"
           onClick={onAddImage}
-          className="inline-flex items-center gap-2 rounded-sm border border-neutral-300 px-1 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 transition hover:bg-neutral-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          className={toolbarButtonClass}
+          aria-label="Add image"
         >
           <Image size={16} />
         </button>
@@ -72,5 +174,12 @@ export function SlideToolbar({
     </div>
   )
 }
+
+type HistoryState = {
+  canUndo: boolean
+  canRedo: boolean
+}
+
+const DEFAULT_HISTORY_STATE: HistoryState = { canUndo: false, canRedo: false }
 
 export type { SlideToolbarProps }

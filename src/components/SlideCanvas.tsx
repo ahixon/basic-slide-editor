@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 
-import type { DeckObject, ImageObject, Slide, TextObject } from '../features/decks/editorState'
+import type { Slide } from '../store'
+import { SlideObjectElement } from './SlideObjectElement'
 import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from './slideDimensions'
 
 type SlideCanvasProps = {
@@ -19,7 +20,7 @@ export function SlideCanvas({
 }: SlideCanvasProps) {
   const scaledWidth = SLIDE_BASE_WIDTH * scale
   const scaledHeight = SLIDE_BASE_HEIGHT * scale
-  const roundedShellClass = rounded ? 'rounded-[32px] shadow-inner' : ''
+  const roundedShellClass = rounded ? 'shadow-inner' : ''
 
   return (
     <article
@@ -40,7 +41,7 @@ export function SlideCanvas({
         }}
       >
         {slide.objects.map((object) => (
-          <SlideObject key={object.id} object={object} />
+          <SlideObjectElement key={object.id} object={object} />
         ))}
         {!slide.objects.length && (
           <div
@@ -51,48 +52,6 @@ export function SlideCanvas({
         )}
       </div>
     </article>
-  )
-}
-
-function SlideObject({ object }: { object: DeckObject }) {
-  if (object.type === 'text') {
-    return <SlideText object={object} />
-  }
-  return <SlideImage object={object} />
-}
-
-function SlideText({ object }: { object: TextObject }) {
-  const style: CSSProperties = {
-    left: object.x,
-    top: object.y,
-    width: typeof object.width === 'number' ? object.width : undefined,
-  }
-
-  return (
-    <p
-      className="absolute whitespace-pre-wrap text-4xl font-semibold leading-snug text-slate-900"
-      style={style}
-    >
-      {object.text}
-    </p>
-  )
-}
-
-function SlideImage({ object }: { object: ImageObject }) {
-  const style: CSSProperties = {
-    left: object.x,
-    top: object.y,
-    width: object.width,
-    height: object.height,
-  }
-
-  return (
-    <figure
-      className="absolute overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 shadow"
-      style={style}
-    >
-      <img src={object.src} alt="Slide visual" className="h-full w-full object-cover" />
-    </figure>
   )
 }
 

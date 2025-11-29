@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { Slide } from '../features/decks/editorState'
-import { SlideCanvas } from './SlideCanvas'
+import type { Slide } from '../store'
+import { SlideEditorCanvas } from './SlideEditorCanvas'
 import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from './slideDimensions'
 
 const SLIDE_VERTICAL_GAP = 24
@@ -9,19 +9,21 @@ const VIEWPORT_PADDING = 32 // matches p-4 (16px * 2)
 
 type SlideViewportProps = {
   slides: Slide[]
-  activeId: string
+  activeSlideId: string | null
   onVisibleChange: (slideId: string) => void
   scaleOverride?: number | null
+  isLoading?: boolean
 }
 
 export function SlideViewport({
   slides,
-  activeId,
+  activeSlideId,
   onVisibleChange,
   scaleOverride = null,
+  isLoading = false,
 }: SlideViewportProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null)
-  const activeIdRef = useRef(activeId)
+  const activeSlideIdRef = useRef<string | null>(activeSlideId)
   const syncingFromUrlRef = useRef(false)
   const syncTimeoutRef = useRef<number | null>(null)
   const measurementFrameRef = useRef<number | null>(null)
@@ -39,13 +41,15 @@ export function SlideViewport({
   }, [])
 
   useEffect(() => {
-    activeIdRef.current = activeId
-  }, [activeId])
+    activeSlideIdRef.current = activeSlideId
+  }, [activeSlideId])
 
   useEffect(() => {
+    if (isLoading) return
     const viewport = viewportRef.current
     if (!viewport) return
-    const activePanel = panelRefs.current.get(activeId)
+    if (!activeSlideId) return
+    const activePanel = panelRefs.current.get(activeSlideId)
     if (!activePanel) return
 
     if (changeOriginRef.current === 'viewport') {
@@ -68,9 +72,10 @@ export function SlideViewport({
         syncTimeoutRef.current = null
       }
     }
-  }, [activeId])
+  }, [activeSlideId, isLoading])
 
   useEffect(() => {
+    if (isLoading) return
     const viewport = viewportRef.current
     if (!viewport) return
 
@@ -80,10 +85,10 @@ export function SlideViewport({
 
       measurementFrameRef.current = requestAnimationFrame(() => {
         measurementFrameRef.current = null
-        const nextId = findClosestSlideId(viewport, panelRefs.current)
-        if (nextId && nextId !== activeIdRef.current) {
+        const nextSlideId = findClosestSlideId(viewport, panelRefs.current)
+        if (nextSlideId && nextSlideId !== activeSlideIdRef.current) {
           changeOriginRef.current = 'viewport'
-          onVisibleChange(nextId)
+          onVisibleChange(nextSlideId)
         }
       })
     }
@@ -98,7 +103,7 @@ export function SlideViewport({
         measurementFrameRef.current = null
       }
     }
-  }, [slides, onVisibleChange])
+  }, [slides, onVisibleChange, isLoading])
 
   useEffect(() => {
     const viewport = viewportRef.current
@@ -146,34 +151,46 @@ export function SlideViewport({
   const scaledWidth = SLIDE_BASE_WIDTH * slideScale
   const scaledHeight = SLIDE_BASE_HEIGHT * slideScale
 
+  const placeholderCount = 3
+  const placeholderIndices = Array.from({ length: placeholderCount })
+  const viewportOverflowClass = isLoading ? 'overflow-hidden' : 'overflow-auto'
+
   return (
     <div
       ref={viewportRef}
-      className="slide-viewport relative flex-1 min-w-0 overflow-auto rounded-lg border border-neutral-200 bg-neutral-50 dark:border-slate-800 dark:bg-slate-900"
+      className={`slide-viewport relative flex-1 min-w-0 rounded-lg border border-neutral-200 bg-neutral-50 dark:border-slate-800 dark:bg-slate-900 ${viewportOverflowClass}`}
     >
       <div className="space-y-6 p-4 w-fit min-w-full min-h-full">
-        {slides.map((slide) => {
-          const isActive = slide.id === activeId
-          return (
-            <div
-              key={slide.id}
-              data-slide-id={slide.id}
-              ref={(node) => registerPanelRef(slide.id, node)}
-              onClick={() => {
-                changeOriginRef.current = 'viewport'
-                onVisibleChange(slide.id)
-              }}
-              className={`slide-shell rounded-lg border bg-white shadow-sm transition dark:bg-white ${
-                isActive
-                  ? 'border-sky-500 ring-1 ring-sky-500 dark:border-sky-400 dark:ring-sky-400'
-                  : 'border-neutral-200 dark:border-slate-800'
-              }`}
-              style={{ width: scaledWidth, height: scaledHeight }}
-            >
-              <SlideCanvas slide={slide} scale={slideScale} />
-            </div>
-          )
-        })}
+        {isLoading
+          ? placeholderIndices.map((_, index) => (
+              <div
+                key={`placeholder-${index}`}
+                className="slide-shell rounded-lg border border-neutral-200 bg-neutral-200/80 shadow-none animate-pulse dark:border-slate-800 dark:bg-slate-800/60"
+                style={{ width: scaledWidth, height: scaledHeight }}
+              />
+            ))
+          : slides.map((slide) => {
+              const isActiveSlide = slide.id === activeSlideId
+              return (
+                <div
+                  key={slide.id}
+                  data-slide-id={slide.id}
+                  ref={(node) => registerPanelRef(slide.id, node)}
+                  onClick={() => {
+                    changeOriginRef.current = 'viewport'
+                    onVisibleChange(slide.id)
+                  }}
+                  className={`slide-shell rounded-lg border bg-white shadow-sm transition dark:bg-white ${
+                    isActiveSlide
+                      ? 'border-sky-500 ring-1 ring-sky-500 dark:border-sky-400 dark:ring-sky-400'
+                      : 'border-neutral-200 dark:border-slate-800'
+                  }`}
+                  style={{ width: scaledWidth, height: scaledHeight }}
+                >
+                  <SlideEditorCanvas slide={slide} scale={slideScale} />
+                </div>
+              )
+            })}
       </div>
     </div>
   )
