@@ -1,9 +1,13 @@
 import { Bold, Image, Italic, List, Redo2, Trash2, Type, Undo2, ZoomIn } from 'lucide-react'
 import { useCallback, useEffect, useReducer, useState } from 'react'
 import type { ButtonHTMLAttributes, ChangeEvent, FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import type { NodeType, ResolvedPos } from 'prosemirror-model'
 
 import { useDeckHistory } from '../store'
-import type { Editor } from '@tiptap/core'
+import type { TextEditorHandle } from '../textEditor'
+import type { EditorView } from 'prosemirror-view'
+import { toggleMark } from 'prosemirror-commands'
+import { liftListItem, wrapInList } from 'prosemirror-schema-list'
 
 const ZOOM_OPTIONS = [
   { label: 'Fit', value: 'auto' },
@@ -21,7 +25,7 @@ type SlideToolbarProps = {
   onAddImage: () => void
   zoomOverride: number | null
   onZoomOverrideChange: (value: number | null) => void
-  activeTextEditor?: Editor | null
+  activeTextEditor?: TextEditorHandle | null
   onDeleteSelectedObject?: () => void
   canDeleteObject?: boolean
   canAddObjects?: boolean
@@ -46,6 +50,7 @@ export function SlideToolbar({
 }: SlideToolbarProps) {
   const { undo, redo, canUndo, canRedo } = useDeckHistory()
   const [, forceUpdate] = useReducer((count) => count + 1, 0)
+  const editorView = activeTextEditor && !activeTextEditor.view.destroyed ? activeTextEditor.view : null
 
   const handleZoomChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const { value } = event.target
@@ -60,40 +65,29 @@ export function SlideToolbar({
   useEffect(() => {
     if (!activeTextEditor) return
     const rerender = () => forceUpdate()
-    activeTextEditor.on('selectionUpdate', rerender)
-    activeTextEditor.on('transaction', rerender)
-    activeTextEditor.on('focus', rerender)
-    activeTextEditor.on('blur', rerender)
-    return () => {
-      activeTextEditor.off('selectionUpdate', rerender)
-      activeTextEditor.off('transaction', rerender)
-      activeTextEditor.off('focus', rerender)
-      activeTextEditor.off('blur', rerender)
-    }
+    const unsubscribe = activeTextEditor.subscribe(rerender)
+    rerender()
+    return () => unsubscribe()
   }, [activeTextEditor])
 
-
-  const isTextEditorActive = Boolean(activeTextEditor?.isFocused)
-  const isBoldActive = activeTextEditor?.isActive('bold') ?? false
-  const isItalicActive = activeTextEditor?.isActive('italic') ?? false
-  const isBulletListActive = activeTextEditor?.isActive('bulletList') ?? false
+  const isTextEditorActive = editorView?.hasFocus() ?? false
+  const isBoldActive = isMarkActive(editorView, 'strong')
+  const isItalicActive = isMarkActive(editorView, 'em')
+  const isBulletListActive = isBulletListSelection(editorView)
   const selectedImageKey = selectedImage ? `${selectedImage.id}:${selectedImage.src ?? ''}` : null
   const showImageToolbar = Boolean(selectedImage && onSaveSelectedImageSrc)
 
   const handleToggleBold = useCallback(() => {
-    if (!activeTextEditor) return
-    activeTextEditor.chain().focus().toggleBold().run()
-  }, [activeTextEditor])
+    toggleMarkOnView(editorView, 'strong')
+  }, [editorView])
 
   const handleToggleItalic = useCallback(() => {
-    if (!activeTextEditor) return
-    activeTextEditor.chain().focus().toggleItalic().run()
-  }, [activeTextEditor])
+    toggleMarkOnView(editorView, 'em')
+  }, [editorView])
 
   const handleToggleBulletList = useCallback(() => {
-    if (!activeTextEditor) return
-    activeTextEditor.chain().focus().toggleBulletList().run()
-  }, [activeTextEditor])
+    toggleBulletList(editorView)
+  }, [editorView])
 
 
   useEffect(() => {
@@ -303,4 +297,80 @@ function ToolbarButton({
       {children}
     </button>
   )
+}
+
+function getUsableView(handleView: EditorView | null): EditorView | null {
+  if (!handleView || handleView.destroyed) {
+    return null
+  }
+  return handleView
+}
+
+function resolveMark(view: EditorView | null, markName: 'strong' | 'em') {
+  return view?.state.schema.marks[markName]
+}
+
+function isMarkActive(view: EditorView | null, markName: 'strong' | 'em'): boolean {
+  const usableView = getUsableView(view)
+  if (!usableView) return false
+  const markType = resolveMark(usableView, markName)
+  if (!markType) return false
+  const { from, $from, to, empty } = usableView.state.selection
+  if (empty) {
+    return Boolean(markType.isInSet(usableView.state.storedMarks || $from.marks()))
+  }
+  return usableView.state.doc.rangeHasMark(from, to, markType)
+}
+
+function toggleMarkOnView(view: EditorView | null, markName: 'strong' | 'em') {
+  const usableView = getUsableView(view)
+  if (!usableView) return
+  const markType = resolveMark(usableView, markName)
+  if (!markType) return
+  usableView.focus()
+  toggleMark(markType)(usableView.state, usableView.dispatch, usableView)
+}
+
+function isBulletListSelection(view: EditorView | null): boolean {
+  const usableView = getUsableView(view)
+  if (!usableView) return false
+  const { bullet_list } = usableView.state.schema.nodes
+  if (!bullet_list) return false
+
+  const { selection } = usableView.state
+  if (isSelectionPosInNode(selection.$from, bullet_list) || isSelectionPosInNode(selection.$to, bullet_list)) {
+    return true
+  }
+
+  let isActive = false
+  usableView.state.doc.nodesBetween(selection.from, selection.to, (node) => {
+    if (node.type === bullet_list) {
+      isActive = true
+      return false
+    }
+    return undefined
+  })
+  return isActive
+}
+
+function isSelectionPosInNode($pos: ResolvedPos, nodeType: NodeType): boolean {
+  for (let depth = $pos.depth; depth > 0; depth -= 1) {
+    if ($pos.node(depth).type === nodeType) {
+      return true
+    }
+  }
+  return false
+}
+
+function toggleBulletList(view: EditorView | null) {
+  const usableView = getUsableView(view)
+  if (!usableView) return
+  const { bullet_list, list_item } = usableView.state.schema.nodes
+  if (!bullet_list || !list_item) return
+  usableView.focus()
+  if (isBulletListSelection(usableView)) {
+    liftListItem(list_item)(usableView.state, usableView.dispatch, usableView)
+  } else {
+    wrapInList(bullet_list)(usableView.state, usableView.dispatch, usableView)
+  }
 }

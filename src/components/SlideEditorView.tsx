@@ -5,7 +5,7 @@ import { useDeckDocument } from '../store'
 import { SlideSidebar } from './SlideSidebar'
 import { SlideToolbar } from './SlideToolbar'
 import { SlideViewport } from './SlideViewport'
-import type { Editor } from '@tiptap/core'
+import type { TextEditorHandle } from '../textEditor'
 
 type NavigateOptions = {
   replace?: boolean
@@ -20,7 +20,7 @@ type SlideEditorViewProps = {
 type ActiveTextEditor = {
   slideId: string
   objectId: string
-  editor: Editor
+  editor: TextEditorHandle
 }
 
 type SelectedObject = {
@@ -174,9 +174,9 @@ export function SlideEditorView({
     ) {
       return
     }
-    const editor = activeTextEditor.editor
-    if (!editor || editor.isDestroyed) return
-    editor.commands.blur()
+    const view = activeTextEditor.editor.view
+    if (!view || view.destroyed) return
+    view.dom.blur()
   }, [activeTextEditor, selectedObject])
 
   const selectedImage = useMemo(() => {
@@ -217,7 +217,7 @@ export function SlideEditorView({
         if (isEditable) return
       }
 
-      if (activeTextEditor?.editor?.isFocused) return
+      if (activeTextEditor?.editor?.view.hasFocus()) return
       if (!selectedObject || selectedObject.slideId !== activeSlideId) return
 
       event.preventDefault()

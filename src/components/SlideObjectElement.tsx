@@ -5,20 +5,20 @@ import type { DeckObject, ImageObject, TextObject } from '../store'
 import {
   MIN_IMAGE_SIZE,
   MIN_TEXT_WIDTH,
+  ensureTextFragmentInitialized,
   getTextFragmentKey,
-  transactDeck,
   useDeckActions,
   useDeckRuntime,
-  useDeckUndoManager,
 } from '../store'
 import { useRoom } from '@liveblocks/react'
 
-import { useEditor, EditorContent } from '@tiptap/react'
-import type { Editor } from '@tiptap/core'
-import StarterKit from '@tiptap/starter-kit'
-import { SharedCollaboration } from '../extensions/SharedCollaboration'
-import * as Y from 'yjs'
+import { ProseMirror, useEditorEffect, useEditorEventListener } from '@nytimes/react-prosemirror'
+import { EditorState, Transaction } from 'prosemirror-state'
+import type { EditorView } from 'prosemirror-view'
 import { GripVertical, Scaling } from 'lucide-react'
+import { getTextUndoManager } from '../history/textHistory'
+import { createTextEditorState } from '../textEditor'
+import type { TextEditorHandle } from '../textEditor'
 
 export type SlideObjectElementProps = {
   object: DeckObject
@@ -29,7 +29,7 @@ export type SlideObjectElementProps = {
   isSelected?: boolean
   onFocusObject?: (objectId: string) => void
   onBlurObject?: (objectId: string) => void
-  onTextEditorFocusChange?: (payload: { objectId: string; editor: Editor } | null) => void
+  onTextEditorFocusChange?: (payload: { objectId: string; editor: TextEditorHandle } | null) => void
   textEditorMode?: 'editable' | 'readonly'
 } & HTMLAttributes<HTMLElement>
 
@@ -106,7 +106,7 @@ function SlideTextElement({
   isSelected?: boolean
   onFocusObject?: (objectId: string) => void
   onBlurObject?: (objectId: string) => void
-  onTextEditorFocusChange?: (payload: { objectId: string; editor: Editor } | null) => void
+  onTextEditorFocusChange?: (payload: { objectId: string; editor: TextEditorHandle } | null) => void
   textEditorMode?: 'editable' | 'readonly'
 } & HTMLAttributes<HTMLDivElement>) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -125,27 +125,85 @@ function SlideTextElement({
   const { updateTextObjectScale, updateTextObjectWidth } = useDeckActions()
   const room = useRoom()
   const { doc } = useDeckRuntime()
-  const undoManager = useDeckUndoManager()
   const historyPausedRef = useRef(false)
   const fragmentKey = useMemo(() => getTextFragmentKey(object.id), [object.id])
-  const textFragment = useMemo(() => doc.getXmlFragment(fragmentKey), [doc, fragmentKey])
+  const textUndoManager = useMemo(() => getTextUndoManager(doc, fragmentKey), [doc, fragmentKey])
+  const collaborationOptions = useMemo(
+    () => ({
+      document: doc,
+      field: fragmentKey,
+      yUndoOptions: { undoManager: textUndoManager },
+    }),
+    [doc, fragmentKey, textUndoManager],
+  )
+  const [editorState, setEditorState] = useState<EditorState>(() => createTextEditorState(collaborationOptions))
+  const [editorMount, setEditorMount] = useState<HTMLElement | null>(null)
+  const editorActiveRef = useRef(false)
+  const editorHandleRef = useRef<TextEditorHandle | null>(null)
+  const editorSubscribersRef = useRef(new Set<() => void>())
 
   useEffect(() => {
-    undoManager.addToScope([textFragment])
-  }, [textFragment, undoManager])
+    ensureTextFragmentInitialized(doc, object)
+  }, [doc, object])
 
   useEffect(() => {
-    if (textFragment.length > 0) return
-    transactDeck(doc, () => {
-      const paragraph = new Y.XmlElement('paragraph')
-      const textNode = new Y.XmlText()
-      if (object.text) {
-        textNode.insert(0, object.text)
+    setEditorState(createTextEditorState(collaborationOptions))
+  }, [collaborationOptions])
+
+  const notifyEditorSubscribers = useCallback(() => {
+    editorSubscribersRef.current.forEach((listener) => listener())
+  }, [])
+
+  const handleDispatchTransaction = useCallback(
+    (transaction: Transaction) => {
+      setEditorState((currentState) => currentState.apply(transaction))
+    },
+    [],
+  )
+
+  const handleEditorViewChange = useCallback(
+    (view: EditorView | null) => {
+      if (!view) {
+        editorHandleRef.current = null
+        editorSubscribersRef.current.clear()
+        if (editorActiveRef.current && onTextEditorFocusChange) {
+          editorActiveRef.current = false
+          onTextEditorFocusChange(null)
+        }
+        return
       }
-      paragraph.insert(0, [textNode])
-      textFragment.insert(0, [paragraph])
-    })
-  }, [doc, object.text, textFragment])
+
+      const handle: TextEditorHandle = {
+        view,
+        subscribe: (listener: () => void) => {
+          editorSubscribersRef.current.add(listener)
+          return () => editorSubscribersRef.current.delete(listener)
+        },
+      }
+
+      editorHandleRef.current = handle
+    },
+    [onTextEditorFocusChange],
+  )
+
+  const handleEditorFocus = useCallback(() => {
+    const handle = editorHandleRef.current
+    if (!handle) return
+    editorActiveRef.current = true
+    onTextEditorFocusChange?.({ objectId: object.id, editor: handle })
+    notifyEditorSubscribers()
+  }, [object.id, onTextEditorFocusChange, notifyEditorSubscribers])
+
+  const handleEditorBlur = useCallback(() => {
+    if (!editorActiveRef.current) return
+    editorActiveRef.current = false
+    onTextEditorFocusChange?.(null)
+    notifyEditorSubscribers()
+  }, [notifyEditorSubscribers, onTextEditorFocusChange])
+
+  useEffect(() => {
+    notifyEditorSubscribers()
+  }, [editorState, notifyEditorSubscribers])
 
   const resolvedScale = Number.isFinite(scale) && scale && scale > 0 ? scale : 1
   const textScale = (() => {
@@ -181,35 +239,9 @@ function SlideTextElement({
   }
   contentStyle.transformOrigin = transformOrigin ?? 'top left'
 
-  const editor = useEditor(
-    {
-      extensions: [
-        StarterKit.configure({ history: false }),
-        SharedCollaboration.configure({
-          document: doc,
-          field: fragmentKey,
-          yUndoOptions: { undoManager },
-        }),
-      ],
-      editable: isTextEditorEditable,
-    },
-    [doc, fragmentKey, undoManager],
-  )
-
-  const editorActiveRef = useRef(false)
-
-  useEffect(() => {
-    if (!editor) return
-    editor.setEditable(isTextEditorEditable)
-  }, [editor, isTextEditorEditable])
-
   const handleFocusCapture = useCallback(() => {
     onFocusObject?.(object.id)
-    if (onTextEditorFocusChange && editor) {
-      editorActiveRef.current = true
-      onTextEditorFocusChange({ objectId: object.id, editor })
-    }
-  }, [editor, object.id, onFocusObject, onTextEditorFocusChange])
+  }, [object.id, onFocusObject])
 
   const handleBlurCapture = useCallback(
     (event: React.FocusEvent<HTMLDivElement>) => {
@@ -218,12 +250,8 @@ function SlideTextElement({
         return
       }
       onBlurObject?.(object.id)
-      if (editorActiveRef.current && onTextEditorFocusChange) {
-        editorActiveRef.current = false
-        onTextEditorFocusChange(null)
-      }
     },
-    [object.id, onBlurObject, onTextEditorFocusChange],
+    [object.id, onBlurObject],
   )
 
   const pauseHistory = useCallback(() => {
@@ -492,7 +520,21 @@ function SlideTextElement({
       {...rest}
     >
       <div ref={containerRef} className="relative" style={contentStyle}>
-        <EditorContent editor={editor} data-slide-text-editor="true" />
+        {editorState ? (
+          <ProseMirror
+            mount={editorMount}
+            state={editorState}
+            dispatchTransaction={handleDispatchTransaction}
+            editable={() => isTextEditorEditable}
+          >
+            <TextEditorBridge
+              onViewChange={handleEditorViewChange}
+              onFocus={handleEditorFocus}
+              onBlur={handleEditorBlur}
+            />
+            <div ref={setEditorMount} data-slide-text-editor="true" className="focus:outline-none" />
+          </ProseMirror>
+        ) : null}
       </div>
       {enableTextScaling && (
         <div className="absolute left-0 top-0" style={overlaySizeStyle}>
@@ -531,6 +573,31 @@ function SlideTextElement({
       )}
     </div>
   )
+}
+
+type TextEditorBridgeProps = {
+  onViewChange: (view: EditorView | null) => void
+  onFocus: (view: EditorView) => void
+  onBlur: (view: EditorView) => void
+}
+
+function TextEditorBridge({ onViewChange, onFocus, onBlur }: TextEditorBridgeProps) {
+  useEditorEffect((view) => {
+    onViewChange(view)
+    return () => onViewChange(null)
+  }, [onViewChange])
+
+  useEditorEventListener('focus', (view) => {
+    onFocus(view)
+    return false
+  })
+
+  useEditorEventListener('blur', (view) => {
+    onBlur(view)
+    return false
+  })
+
+  return null
 }
 
 function SlideImageElement({

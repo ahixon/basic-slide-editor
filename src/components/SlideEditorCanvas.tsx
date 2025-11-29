@@ -6,7 +6,7 @@ import { useDeckActions } from '../store'
 import { useRoom } from '@liveblocks/react'
 import { SlideObjectElement } from './SlideObjectElement'
 import { SLIDE_BASE_HEIGHT, SLIDE_BASE_WIDTH } from './slideDimensions'
-import type { Editor } from '@tiptap/core'
+import type { TextEditorHandle } from '../textEditor'
 
 type SlideEditorCanvasProps = {
   slide: Slide
@@ -14,7 +14,7 @@ type SlideEditorCanvasProps = {
   className?: string
   style?: CSSProperties
   rounded?: boolean
-  onTextEditorFocusChange?: (payload: { slideId: string; objectId: string; editor: Editor } | null) => void
+  onTextEditorFocusChange?: (payload: { slideId: string; objectId: string; editor: TextEditorHandle } | null) => void
   isActive?: boolean
   onSelectedObjectChange?: (payload: { slideId: string; objectId: string | null }) => void
 }
@@ -214,7 +214,7 @@ export function SlideEditorCanvas({
   }, [])
 
   const handleTextEditorFocusChange = useCallback(
-    (payload: { objectId: string; editor: Editor } | null) => {
+    (payload: { objectId: string; editor: TextEditorHandle } | null) => {
       if (!onTextEditorFocusChange) return
       if (!payload) {
         onTextEditorFocusChange(null)

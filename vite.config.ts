@@ -11,6 +11,11 @@ export default defineConfig({
       target: 'react',
       autoCodeSplitting: true,
     }),
-    react()
+    react(),
   ],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './vitest.setup.ts',
+    css: false,
+  },
 })

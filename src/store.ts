@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'r
 import type { LiveblocksYjsProvider } from '@liveblocks/yjs'
 import * as Y from 'yjs'
 
+import { ensureHistoryBridge, registerDeckUndoManager, TEXT_HISTORY_ORIGIN } from './history/textHistory'
+
 export const MIN_TEXT_WIDTH = 8
 export const MIN_IMAGE_SIZE = 16
 
@@ -12,11 +14,79 @@ const isDeckHistoryDebuggingEnabled = Boolean(import.meta.env?.DEV)
 
 function logDeckHistory(message: string, payload?: unknown) {
     if (!isDeckHistoryDebuggingEnabled) return
+    const logFn = message === 'stack-change' ? console.trace : console.debug
     if (typeof payload === 'undefined') {
-        console.debug(`[DeckHistory] ${message}`)
+        logFn(`[DeckHistory] ${message}`)
         return
     }
-    console.debug(`[DeckHistory] ${message}`, payload)
+    logFn(`[DeckHistory] ${message}`, payload)
+}
+
+function formatTransactionOrigin(origin: unknown) {
+    if (origin === DECK_HISTORY_ORIGIN) return 'deck'
+    if (typeof origin === 'string') return origin
+    const pluginKey = getPluginKeyName(origin)
+    if (pluginKey) return pluginKey
+    if (typeof origin === 'symbol') return origin.description ?? origin.toString()
+    if (typeof origin === 'function') return origin.name || 'function'
+    if (origin && typeof origin === 'object') {
+        return origin.constructor?.name ?? 'object'
+    }
+    return origin ?? 'unknown'
+}
+
+type PluginOrigin = {
+    key?: unknown
+    name?: unknown
+}
+
+function readString(value: unknown): string | undefined {
+    return typeof value === 'string' ? value : undefined
+}
+
+function getPluginKeyName(origin: unknown, seen = new Set<unknown>()): string | undefined {
+    if (!origin || seen.has(origin)) return undefined
+    if (typeof origin === 'string') return origin
+    if (typeof origin === 'symbol') return origin.description ?? origin.toString()
+    if (typeof origin === 'function') {
+        const functionCandidate = origin as PluginOrigin
+        return readString(functionCandidate.key) ?? origin.name ?? undefined
+    }
+    if (typeof origin !== 'object') return undefined
+    seen.add(origin)
+    const candidate = origin as PluginOrigin
+    const direct = readString(candidate.key)
+    if (direct) return direct
+    if (candidate.key) {
+        const nested = getPluginKeyName(candidate.key, seen)
+        if (nested) return nested
+    }
+    return readString(candidate.name)
+}
+
+function describeYType(type?: Y.AbstractType<unknown>) {
+    if (!type) return 'unknown'
+    const name = type.constructor?.name ?? 'YType'
+    const item = (type as { _item?: { parent?: Y.AbstractType<unknown> } })._item
+    if (item?.parent) {
+        const parent = item.parent
+        if (parent?.constructor?.name) {
+            return `${name}<${parent.constructor.name}>`
+        }
+    }
+    return name
+}
+
+function describeTransactionChanges(transaction: Y.Transaction) {
+    const changed: Array<{ type: string; keysChanged?: string[] }> = []
+    transaction.changed?.forEach((meta, type) => {
+        changed.push({
+            type: describeYType(type),
+            keysChanged: meta?.keysChanged ? Array.from(meta.keysChanged) : undefined,
+        })
+    })
+    const parentTypes = Array.from(transaction.changedParentTypes ? transaction.changedParentTypes.keys() : [], describeYType)
+    return { changed, parentTypes }
 }
 
 type DebuggableUndoManager = Y.UndoManager & {
@@ -131,20 +201,23 @@ export function useDeckUndoManager(): Y.UndoManager {
 }
 
 function getOrCreateUndoManager(doc: Y.Doc, provider: LiveblocksYjsProvider): Y.UndoManager {
+    ensureHistoryBridge(doc)
     const scope = collectUndoScope(doc, provider)
     const captureTransaction = createDeckCaptureTransaction()
     let undoManager = undoManagerCache.get(doc)
     if (!undoManager) {
         undoManager = new Y.UndoManager(scope, {
             doc,
-            trackedOrigins: new Set([DECK_HISTORY_ORIGIN]),
+            trackedOrigins: new Set([DECK_HISTORY_ORIGIN, TEXT_HISTORY_ORIGIN]),
             captureTransaction,
         })
         undoManagerCache.set(doc, undoManager)
+        registerDeckUndoManager(doc, undoManager)
         return undoManager
     }
     undoManager.addToScope(scope)
     ;(undoManager as { captureTransaction?: (transaction: Y.Transaction) => boolean }).captureTransaction = captureTransaction
+    registerDeckUndoManager(doc, undoManager)
     return undoManager
 }
 
@@ -152,32 +225,35 @@ function createDeckCaptureTransaction() {
     return (transaction: Y.Transaction) => {
         const changedCount = transaction.changed?.size ?? 0
         const parentCount = transaction.changedParentTypes?.size ?? 0
-        const hasMeaningfulChange = changedCount > 0 || parentCount > 0
-
-        if (!hasMeaningfulChange) {
-            return false
-        }
-
-        return true
+        return changedCount > 0 || parentCount > 0
     }
 }
 
 function collectUndoScope(doc: Y.Doc, provider: LiveblocksYjsProvider): (Y.Doc | Y.AbstractType<unknown>)[] {
     const scope: (Y.Doc | Y.AbstractType<unknown>)[] = [doc]
 
-    doc.share.forEach((type) => {
-        scope.push(type)
+    doc.share.forEach((type, key) => {
+        if (shouldIncludeShareEntry(key)) {
+            scope.push(type)
+        }
     })
 
     provider.subdocHandlers.forEach((handler) => {
         const subDoc = handler.doc
         scope.push(subDoc)
-        subDoc.share.forEach((type) => {
-            scope.push(type)
+        subDoc.share.forEach((type, key) => {
+            if (shouldIncludeShareEntry(key)) {
+                scope.push(type)
+            }
         })
     })
 
     return scope
+}
+
+function shouldIncludeShareEntry(key?: string) {
+    if (typeof key !== 'string') return true
+    return !key.startsWith('text-')
 }
 
 function logDocTopology(doc: Y.Doc, provider: LiveblocksYjsProvider) {
@@ -291,10 +367,13 @@ export function useDeckHistory() {
     useEffect(() => {
         if (!isDeckHistoryDebuggingEnabled) return
         const handleAfterTransaction = (transaction: Y.Transaction) => {
-            const originLabel = transaction.origin === DECK_HISTORY_ORIGIN ? 'deck' : transaction.origin ?? 'unknown'
+            const originLabel = formatTransactionOrigin(transaction.origin)
+            const changeSummary = describeTransactionChanges(transaction)
             logDeckHistory('after-transaction', {
                 origin: originLabel,
                 hasChanged: transaction.changed.size,
+                hasChangedParents: transaction.changedParentTypes.size,
+                ...changeSummary,
             })
         }
         doc.on('afterTransaction', handleAfterTransaction)
@@ -512,7 +591,7 @@ function appendObjectToSlide(doc: Y.Doc, slideId: string, object: DeckObject) {
             order.push([object.id])
         }
         if (object.type === 'text') {
-            ensureTextFragmentInitialized(doc, object)
+            ensureTextFragmentInitialized(doc, object, { insideTransaction: true })
         }
     }, 'appendObjectToSlide')
 }
@@ -624,17 +703,26 @@ function createYObject(object: DeckObject): Y.Map<unknown> {
     return yObject
 }
 
-function ensureTextFragmentInitialized(doc: Y.Doc, object: TextObject) {
-    const fragment = doc.getXmlFragment(getTextFragmentKey(object.id))
-    if (fragment.length > 0) return
+export function ensureTextFragmentInitialized(doc: Y.Doc, object: TextObject, options?: { insideTransaction?: boolean }) {
+    const seedFragment = () => {
+        const fragment = doc.getXmlFragment(getTextFragmentKey(object.id))
+        if (fragment.length > 0) return
 
-    const paragraph = new Y.XmlElement('paragraph')
-    const textNode = new Y.XmlText()
-    if (object.text) {
-        textNode.insert(0, object.text)
+        const paragraph = new Y.XmlElement('paragraph')
+        const textNode = new Y.XmlText()
+        if (object.text) {
+            textNode.insert(0, object.text)
+        }
+        paragraph.insert(0, [textNode])
+        fragment.insert(0, [paragraph])
     }
-    paragraph.insert(0, [textNode])
-    fragment.insert(0, [paragraph])
+
+    if (options?.insideTransaction) {
+        seedFragment()
+        return
+    }
+
+    transactDeck(doc, seedFragment, 'ensureTextFragmentInitialized')
 }
 
 function findObject(doc: Y.Doc, slideId: string, objectId: string): Y.Map<unknown> | null {
