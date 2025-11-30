@@ -88,8 +88,9 @@ describe('text history bridge', () => {
   it('retains redo stack after undoing a text object addition even when the editor tears down', async () => {
     const doc = new Y.Doc()
     ensureHistoryBridge(doc)
-    const transactions: Array<{ origin: unknown; changed: number; parents: number }> = []
-    let lastTransaction: { origin: unknown; changed: number; parents: number } | null = null
+    type TransactionSummary = { origin: unknown; changed: number; parents: number }
+    const transactions: TransactionSummary[] = []
+    let lastTransaction: TransactionSummary | null = null
     doc.on('afterTransaction', (transaction) => {
       const record = {
         origin: transaction.origin,
@@ -116,7 +117,7 @@ describe('text history bridge', () => {
         return result
       }
     }
-    const stackClears: Array<{ undoStackCleared: boolean; redoStackCleared: boolean; lastTransaction: typeof lastTransaction }> = []
+    const stackClears: Array<{ undoStackCleared: boolean; redoStackCleared: boolean; lastTransaction: TransactionSummary | null }> = []
     deckUndoManager.on('stack-cleared', (event) => {
       stackClears.push({ ...event, lastTransaction })
     })

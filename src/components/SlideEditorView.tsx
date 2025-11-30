@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { EditorView } from 'prosemirror-view'
 
 import type { DeckObject, Slide } from '../store'
 import { useDeckDocument } from '../store'
@@ -34,6 +35,9 @@ function generateId(seed: string) {
   }
   return `${seed}-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`
 }
+
+const isEditorViewDestroyed = (view: EditorView | null | undefined): boolean =>
+  Boolean((view as { destroyed?: boolean } | null)?.destroyed)
 
 export function SlideEditorView({
   slideId,
@@ -175,7 +179,7 @@ export function SlideEditorView({
       return
     }
     const view = activeTextEditor.editor.view
-    if (!view || view.destroyed) return
+    if (!view || isEditorViewDestroyed(view)) return
     view.dom.blur()
   }, [activeTextEditor, selectedObject])
 

@@ -20,6 +20,9 @@ const ZOOM_OPTIONS = [
   { label: '200%', value: '2' },
 ]
 
+const isEditorViewDestroyed = (view: EditorView | null | undefined): boolean =>
+  Boolean((view as { destroyed?: boolean } | null)?.destroyed)
+
 type SlideToolbarProps = {
   onAddTextbox: () => void
   onAddImage: () => void
@@ -50,7 +53,7 @@ export function SlideToolbar({
 }: SlideToolbarProps) {
   const { undo, redo, canUndo, canRedo } = useDeckHistory()
   const [, forceUpdate] = useReducer((count) => count + 1, 0)
-  const editorView = activeTextEditor && !activeTextEditor.view.destroyed ? activeTextEditor.view : null
+  const editorView = activeTextEditor && !isEditorViewDestroyed(activeTextEditor.view) ? activeTextEditor.view : null
 
   const handleZoomChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const { value } = event.target
@@ -300,7 +303,7 @@ function ToolbarButton({
 }
 
 function getUsableView(handleView: EditorView | null): EditorView | null {
-  if (!handleView || handleView.destroyed) {
+  if (!handleView || isEditorViewDestroyed(handleView)) {
     return null
   }
   return handleView

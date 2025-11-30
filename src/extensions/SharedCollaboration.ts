@@ -6,6 +6,7 @@ import { Doc, UndoManager as YUndoManager, XmlElement, XmlFragment as YXmlFragme
 
 type YSyncOpts = Parameters<typeof ySyncPlugin>[1]
 type YUndoOpts = Parameters<typeof yUndoPlugin>[0]
+type ExtendedYUndoOptions = YUndoOpts & { captureTransaction?: (transaction: Transaction) => boolean }
 
 type StackItemEvent = {
   stackItem: { meta: Map<unknown, unknown> }
@@ -18,7 +19,7 @@ export interface SharedCollaborationOptions {
   provider?: unknown | null
   onFirstRender?: () => void
   ySyncOptions?: YSyncOpts
-  yUndoOptions?: YUndoOpts
+  yUndoOptions?: ExtendedYUndoOptions
 }
 
 function transactionTouchesXmlContent(transaction: Transaction): boolean {
@@ -47,15 +48,15 @@ export function createSharedCollaborationPlugins(options: SharedCollaborationOpt
     throw new Error('SharedCollaboration requires a Yjs fragment or document/field pair')
   }
 
-  const userCaptureTransaction = options.yUndoOptions?.captureTransaction
+  const { captureTransaction: userCaptureTransaction, ...yUndoOverrides } = options.yUndoOptions ?? {}
+  const baseYUndoOptions = yUndoOverrides as YUndoOpts
   let editorUndoManagerRef: UndoManager | null = null
 
   const captureTransaction = (transaction: Transaction) => {
     const changedCount = transaction.changed?.size ?? 0
     const changedParents = transaction.changedParentTypes?.size ?? 0
-    const origin = transaction.origin as PluginKey | undefined
-    const isYSyncOrigin =
-      origin === ySyncPluginKey || (!!origin && origin instanceof PluginKey && origin.key === ySyncPluginKey.key)
+    const origin = transaction.origin as PluginKey | UndoManager | undefined
+    const isYSyncOrigin = origin === ySyncPluginKey
 
     if (!transactionTouchesXmlContent(transaction)) {
       return false
@@ -77,16 +78,16 @@ export function createSharedCollaborationPlugins(options: SharedCollaborationOpt
   }
 
   const yUndoPluginInstance = yUndoPlugin({
-    ...options.yUndoOptions,
+    ...baseYUndoOptions,
     captureTransaction,
-  })
+  } as YUndoOpts)
 
   yUndoPluginInstance.spec.view = (view: EditorView) => {
     const yState = ySyncPluginKey.getState(view.state)
     const undoState = yUndoPluginKey.getState(view.state)
-    const undoManager = undoState.undoManager
+    const undoManager = undoState?.undoManager
 
-    if (!undoManager) {
+    if (!undoState || !undoManager) {
       return {
         destroy: () => undefined,
       }
@@ -99,14 +100,14 @@ export function createSharedCollaborationPlugins(options: SharedCollaborationOpt
     }
 
     const handleStackItemAdded = (event: StackItemEvent) => {
-      const binding = yState.binding
+      const binding = yState?.binding
       if (binding) {
         event.stackItem.meta.set(binding, undoState.prevSel)
       }
     }
 
     const handleStackItemPopped = (event: StackItemEvent) => {
-      const binding = yState.binding
+      const binding = yState?.binding
       if (binding) {
         binding.beforeTransactionSelection =
           event.stackItem.meta.get(binding) || binding.beforeTransactionSelection

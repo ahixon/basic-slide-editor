@@ -113,16 +113,15 @@ function getOrCreateUndoManager(doc: Y.Doc, provider: LiveblocksYjsProvider): Y.
     const captureTransaction = createDeckCaptureTransaction()
     let undoManager = undoManagerCache.get(doc)
     if (!undoManager) {
-        undoManager = new Y.UndoManager(scope, {
+        undoManager = new Y.UndoManager(doc, {
             doc,
             trackedOrigins: new Set([DECK_HISTORY_ORIGIN, TEXT_HISTORY_ORIGIN]),
             captureTransaction,
         })
         undoManagerCache.set(doc, undoManager)
-        registerDeckUndoManager(doc, undoManager)
-        return undoManager
     }
-    undoManager.addToScope(scope)
+    scope.subDocs.forEach((entry) => undoManager?.addToScope(entry))
+    scope.types.forEach((entry) => undoManager?.addToScope(entry))
     ;(undoManager as { captureTransaction?: (transaction: Y.Transaction) => boolean }).captureTransaction = captureTransaction
     registerDeckUndoManager(doc, undoManager)
     return undoManager
@@ -136,26 +135,42 @@ function createDeckCaptureTransaction() {
     }
 }
 
-function collectUndoScope(doc: Y.Doc, provider: LiveblocksYjsProvider): (Y.Doc | Y.AbstractType<unknown>)[] {
-    const scope: (Y.Doc | Y.AbstractType<unknown>)[] = [doc]
+type UndoScopeEntries = {
+    subDocs: Y.Doc[]
+    types: Y.AbstractType<unknown>[]
+}
 
-    doc.share.forEach((type, key) => {
-        if (shouldIncludeShareEntry(key)) {
-            scope.push(type)
+function collectUndoScope(doc: Y.Doc, provider: LiveblocksYjsProvider): UndoScopeEntries {
+    const subDocs: Y.Doc[] = []
+    const types: Y.AbstractType<unknown>[] = []
+    const visitedDocs = new Set<Y.Doc>()
+
+    const visitDoc = (source: Y.Doc, isRoot = false) => {
+        if (visitedDocs.has(source)) return
+        visitedDocs.add(source)
+        if (!isRoot) {
+            subDocs.push(source)
+        }
+        source.share.forEach((type, key) => {
+            if (shouldIncludeShareEntry(key)) {
+                types.push(type as Y.AbstractType<unknown>)
+            }
+        })
+        source.subdocs?.forEach((nested) => {
+            visitDoc(nested, false)
+        })
+    }
+
+    visitDoc(doc, true)
+
+    provider.subdocHandlers.forEach((handler) => {
+        const handlerDoc = (handler as unknown as { doc?: Y.Doc }).doc
+        if (handlerDoc) {
+            visitDoc(handlerDoc, false)
         }
     })
 
-    provider.subdocHandlers.forEach((handler) => {
-        const subDoc = handler.doc
-        scope.push(subDoc)
-        subDoc.share.forEach((type, key) => {
-            if (shouldIncludeShareEntry(key)) {
-                scope.push(type)
-            }
-        })
-    })
-
-    return scope
+    return { subDocs, types }
 }
 
 function shouldIncludeShareEntry(key?: string) {
